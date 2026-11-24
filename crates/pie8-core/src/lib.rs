@@ -1,5 +1,8 @@
 #![no_std]
 
+pub mod buttons;
+pub mod graphics;
+
 /// Text printed after the architecture-specific runtime has initialized.
 pub const RUST_READY_MESSAGE: &str = "Rust initialization: OK";
 

@@ -1,6 +1,6 @@
 use core::fmt;
 
-use crate::{PERIPHERAL_BASE, gpio, read32, write32};
+use crate::{PERIPHERAL_BASE, gpio, read32, timer::Timer, write32};
 
 const AUX_BASE: usize = PERIPHERAL_BASE + 0x21_5000;
 const AUX_ENABLES: usize = AUX_BASE + 0x04;
@@ -21,6 +21,7 @@ impl MiniUart {
     /// `core_freq=250`, which make divisor 270 yield approximately 115200 baud.
     #[must_use]
     pub fn new() -> Self {
+        let timer = Timer::new();
         write32(AUX_ENABLES, read32(AUX_ENABLES) | 1);
         write32(AUX_MU_CNTL, 0);
         write32(AUX_MU_IER, 0);
@@ -28,7 +29,7 @@ impl MiniUart {
         write32(AUX_MU_MCR, 0);
         write32(AUX_MU_IIR, 0xc6);
         write32(AUX_MU_BAUD, 270);
-        gpio::configure_uart_pins();
+        gpio::configure_uart_pins(&timer);
         write32(AUX_MU_CNTL, 3);
         Self
     }

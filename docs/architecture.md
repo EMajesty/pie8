@@ -1,74 +1,104 @@
 # Architecture and technical decisions
 
-## Milestone 001 execution path
+## Startup and exception state
 
-The VideoCore boot firmware loads the flat `kernel8.img` at physical address
-`0x80000` in AArch64 mode. `_start` is the first byte in the image. Every core
-may arrive there, so assembly reads `MPIDR_EL1` before using RAM: affinity-0
-core 0 continues and all others remain in a `wfe` loop. The primary core:
+The GPU firmware loads `_start` at physical `0x80000`. All nonzero MPIDR
+affinity-0 cores park before touching the single boot stack. The primary core
+normalizes EL3 or EL2 entry to EL1h. EL3 selects non-secure AArch64 and clears
+`CPTR_EL3`; EL2 sets `HCR_EL2.RW`, clears `CPTR_EL2.TFP`, permits EL1 physical
+counter/timer access through `CNTHCTL_EL2`, and clears `CNTVOFF_EL2`. At EL1,
+startup preserves required `SCTLR_EL1` RES1 fields with translation/caches off,
+sets `CPACR_EL1.FPEN=0b11`, installs `VBAR_EL1`, initializes the stack and BSS,
+then enters Rust. DAIF remains masked because this milestone is polling-only.
 
-1. Detects `CurrentEL`.
-2. If necessary, transitions EL3 to non-secure AArch64 EL2, then EL2 to EL1h.
-3. Masks exceptions, disables translation/caches, installs a 64 KiB aligned
-   stack, and zeroes the linker-defined BSS range in eight-byte units.
-4. Calls `kernel_main`, which initializes GPIO14/15 and mini UART, prints the
-   banner, then waits forever.
+The AArch64 vector section is 2048-byte aligned and has all 16 architected
+128-byte entries. Every unexpected synchronous exception, IRQ, FIQ, or SError
+prints its vector number plus `ESR_EL1`, `ELR_EL1`, `FAR_EL1`, and `SPSR_EL1`
+then executes a completion barrier and parks. It does not attempt unsafe
+recovery. `FAR_EL1` is printed even though its architectural validity depends
+on the ESR exception class and FnV bit.
 
-The linker places boot code first at `0x80000`, followed by text, read-only data,
-data, BSS, and the boot stack. BSS and stack are `NOLOAD`, so `objcopy` does not
-inflate the image with zeroes. The firmware has no heap and no interrupts.
+## Memory layout and unsafe invariants
 
-## Crate boundaries
+Code, the vector table, read-only data, data, and BSS are followed by a
+64-byte-aligned 153,600-byte framebuffer and a 64 KiB stack. Framebuffer and
+stack are `NOLOAD`; they do not inflate `kernel8.img`. Linker assertions check
+vector size/alignment and framebuffer/stack separation. A synchronized
+`UnsafeCell` owns the framebuffer. Its safety invariant is that startup has
+permanently parked all other cores and temporary framebuffer borrows never
+overlap in the core-0 event loop.
 
-`pie8-core` owns only portable values and transformations; its tests run on the
-host. `pie8-rpi` owns documented BCM2837 register access and AArch64 system
-register operations. `pie8-firmware` owns startup policy and product diagnostics.
-The image inspector is a real host tool rather than a placeholder: it rejects
-empty or all-zero deployment images. New crates should be added only when a
-similar concrete boundary appears.
+MMIO reads/writes are volatile and bracketed by `dmb osh`; a `dsb sy` precedes
+terminal fault waits. This is deliberately conservative with the MMU disabled.
+GPIO pull configuration uses generic-counter delays rather than CPU loop timing.
 
-## UART decision
+## Time and buttons
 
-UART1 (the 16550-like mini UART) is used on both target boards because firmware
-normally routes it to GPIO14/15 while PL011 is used for Bluetooth. Its clock is
-derived from the VPU core clock. `enable_uart=1` and `core_freq=250` fix that
-clock at 250 MHz; divisor 270 gives `250000000 / (8 * (270 + 1))`, approximately
-115200 baud. The driver uses polling, 8 data bits, no parity, one stop bit, and
-no flow control. MMIO access is volatile, and every unsafe block states its
-invariant. The fixed clock can increase idle power and is an accepted bootstrap
-tradeoff. A later mailbox-derived clock or PL011 policy may replace it.
+The monotonic timer reads `CNTFRQ_EL0` and `CNTPCT_EL0`. Conversion splits
+quotient/remainder to avoid overflow. Microsecond delay rounds up to the next
+counter tick; millisecond delay builds on it. Timestamp differences use wrapping
+subtraction.
 
-## Boot firmware and reproducibility
+The portable eight-button state machine consumes logical pressed samples, so
+active-low conversion stays in board code. Each button independently tracks a
+candidate, stable state, transition time, and press start. The default debounce
+is 10 ms. One update can return simultaneous events for all eight buttons.
 
-The SD staging script pins official Raspberry Pi firmware commit
-`cd2a1f1b67266d85f8c00dd9c2190fb8f7b48465` and SHA-256 checks each downloaded
-file. Nix inputs, Rust version, compilation target, and release settings are
-pinned. The default diagnostic build ID comes from Git and therefore identifies
-source, while identical source and tool inputs produce the same image. Override
-`PIE8_BUILD_ID` explicitly for release automation.
+The application targets a 1 ms poll interval. A button-indicator update sends
+only 10×22 pixels: 440 bytes, theoretically about 0.45 ms on the wire at
+7.8125 MHz, plus commands and MMIO overhead. Uptime and press-count regions can
+take a few milliseconds. Therefore presses that remain stable for roughly
+15 ms should be observable in normal operation; pulses close to or below the
+10 ms debounce threshold are intentionally not guaranteed. Exact transfer and
+poll latency is unmeasured until hardware testing. Startup full-screen colour
+tests block polling by design because the diagnostic loop has not started.
 
-## Significant decisions and open questions
+## SPI and display
 
-- Target EL is EL1h, leaving EL2 available to firmware and making future OS-like
-  facilities conventional. Exception vectors are not installed yet, so DAIF
-  remains masked.
-- Only affinity-0 core 0 runs. Multicore release/mailboxes are deferred.
-- `device_tree=` avoids passing or parsing board descriptions during bootstrap.
-  Re-enable DT before drivers need board-specific discovery.
-- Peripheral base `0x3f000000` is shared by Pi 3 and Zero 2 W. Supporting Pi 4/5
-  requires runtime discovery or a separate platform target.
-- Confirm the actual TFT controller, wiring, SPI ceiling, and orientation.
-- Decide the audio clock master, codec/DAC, DMA channel strategy, and underrun
-  recovery before audio work.
-- Decide whether future firmware updates keep the legacy GPU firmware path or
-  use a separately managed boot bundle.
+BCM2837 SPI0 owns GPIO8, GPIO10, and GPIO11 in ALT0, mode 0, hardware CE0, and an even clock
+divider. Divider 32 with the boot-configured 250 MHz core clock is an estimated
+7.8125 MHz. Each blocking transfer drains RX while filling TX so an unconnected
+MISO cannot fill and stall the receive FIFO. Transfers have a 100 ms timeout,
+always deassert transfer-active state on failure, and RGB565 bulk output uses a
+small fixed byte-order conversion buffer. DMA is deferred.
+
+ST7789 commands are isolated from SPI transport. Configuration exposes four
+orientations, RGB/BGR order, inversion, and X/Y offsets. The prototype defaults
+to landscape 320×240, RGB, inversion enabled, and zero offsets. Initialization
+uses hardware reset, sleep-out, RGB565 `COLMOD`, `MADCTL`, inversion, normal
+mode, and display-on. Window updates use `CASET`, `RASET`, and `RAMWR`. The
+backlight GPIO is only a logic control.
+
+The panel advertisement also mentions ILI9488, whose usual native geometry and
+pixel-format behavior differ. Without wired MISO, controller ID reads are not
+reliable; visual tests and panel markings are the evidence. A second driver is
+deferred until that evidence exists.
+
+## Graphics and application
+
+The portable graphics surface provides RGB565 colors, clipped rectangles,
+horizontal/vertical lines, and allocation-free 5×7 bitmap text. The diagnostic
+draws into one static framebuffer. Full-screen writes occur only during colour
+tests and initial dashboard paint. Uptime, count, and button state use bounded
+regions. UART remains independently useful when display initialization fails.
+
+## Performance evidence
+
+Theoretical minimum full-frame payload time is 153,600 bytes × 8 /
+7,812,500 ≈ 157 ms. Command overhead, per-row/per-chunk CE transitions, volatile
+MMIO, and barriers make real time longer. Firmware measures each full colour
+transfer with the generic counter and displays/logs the latest value. No
+measured hardware value is recorded yet, so every numeric performance statement
+above is an estimate except ELF/image sizes produced by host verification.
 
 ## Primary references
 
-- [Raspberry Pi configuration and UART documentation](https://www.raspberrypi.com/documentation/computers/configuration.html)
-- [Raspberry Pi `config.txt` documentation](https://www.raspberrypi.com/documentation/computers/config_txt.html)
-- [Raspberry Pi boot-folder documentation](https://www.raspberrypi.com/documentation/computers/configuration.html#boot-folder-contents)
-- [BCM2835 ARM Peripherals](https://datasheets.raspberrypi.com/bcm2835/bcm2835-peripherals.pdf)
+- [BCM2835 ARM Peripherals (GPIO and SPI programming model)](https://datasheets.raspberrypi.com/bcm2835/bcm2835-peripherals.pdf)
 - [Arm A-profile exception model](https://developer.arm.com/documentation/102412/latest/)
-- [Arm A64 instruction and system-register reference](https://developer.arm.com/documentation/ddi0602/latest/)
-- [Official Raspberry Pi firmware repository and licensing](https://github.com/raspberrypi/firmware)
+- [Arm generic timer guide](https://developer.arm.com/-/media/Arm%20Developer%20Community/PDF/Learn%20the%20Architecture/Generic%20Timer.pdf)
+- [Arm A64 instruction/system-register reference](https://developer.arm.com/documentation/ddi0602/latest/)
+- [ST7789V specification](https://dl.espressif.com/dl/schematics/ST7789V_SPEC_V1.0.pdf)
+- [Raspberry Pi UART/configuration documentation](https://www.raspberrypi.com/documentation/computers/configuration.html)
+
+The implementation was written specifically for PIE8 from these references; no
+third-party driver or tutorial source was copied.

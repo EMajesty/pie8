@@ -4,11 +4,11 @@ version = 4
 
 [[package]]
 name = "pie8-core"
-version = "0.1.0"
+version = "0.2.0"
 
 [[package]]
 name = "pie8-firmware"
-version = "0.1.0"
+version = "0.2.0"
 dependencies = [
  "pie8-core",
  "pie8-rpi",
@@ -16,8 +16,8 @@ dependencies = [
 
 [[package]]
 name = "pie8-image-inspect"
-version = "0.1.0"
+version = "0.2.0"
 
 [[package]]
 name = "pie8-rpi"
-version = "0.1.0"
+version = "0.2.0"

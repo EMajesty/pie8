@@ -22,3 +22,15 @@ pub fn wait_forever() -> ! {
         unsafe { asm!("wfe", options(nomem, nostack)) };
     }
 }
+
+#[inline(always)]
+pub(crate) fn data_memory_barrier() {
+    // SAFETY: The barrier has no memory operand; it orders explicit MMIO accesses.
+    unsafe { asm!("dmb osh", options(nostack, preserves_flags)) };
+}
+
+#[inline(always)]
+pub fn data_sync_barrier() {
+    // SAFETY: A system-wide completion barrier is valid at EL1.
+    unsafe { asm!("dsb sy", options(nostack, preserves_flags)) };
+}

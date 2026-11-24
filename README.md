@@ -1,48 +1,36 @@
 # PIE8
 
-PIE8 is an experimental portable hardware music tracker, inspired by the
-Dirtywave M8, written in bare-metal Rust. The development board is a Raspberry
-Pi 3; the intended product board is a Raspberry Pi Zero 2 W. Milestone 001 is
-deliberately small: start one Cortex-A53 core in AArch64 EL1 and report a known
-boot state over UART. There is no display, audio, storage, USB, allocator, or
-tracker implementation yet.
+PIE8 is a portable bare-metal Rust music tracker project for Raspberry Pi. The
+development platform is Raspberry Pi 3 and the intended final board is
+Raspberry Pi Zero 2 W. Milestone 002 provides an interactive hardware
+diagnostic: UART fault reporting, timer-driven active-low buttons, and a
+320×240 RGB565 display path using BCM2837 SPI0 and an ST7789 controller
+hypothesis. It is not yet tracker firmware.
 
-## Repository layout
+## Build and verify
 
-- `crates/pie8-core`: platform-independent logic, usable by firmware and host tests.
-- `crates/pie8-rpi`: BCM2837 GPIO, CPU, and mini-UART primitives.
-- `firmware`: AArch64 reset code, memory layout, panic handler, and boot banner.
-- `tools/image-inspect`: host-side raw-image sanity checker.
-- `boot`: files maintained by PIE8 for the FAT boot partition.
-- `scripts`: reproducible build, verification, and SD staging commands.
-
-See [architecture](docs/architecture.md) and [roadmap](docs/roadmap.md).
-
-## Development and build
-
-On NixOS (or another system with flakes enabled):
+The Nix flake pins stable Rust 1.85.0, `aarch64-unknown-none`, LLVM tools,
+formatting/lint tools, and picocom:
 
 ```sh
 nix develop
 ./scripts/check.sh
 ```
 
-The shorter build-only command is:
+Build only:
 
 ```sh
 nix develop --command ./scripts/build.sh
 ```
 
-It cross-compiles `aarch64-unknown-none`, converts the ELF to a flat binary,
-and produces `build/kernel8.img`. The banner's build ID is the current short
-Git commit by default; set `PIE8_BUILD_ID` to an explicit value when needed.
-The pinned Rust toolchain is stable 1.85.0. `flake.lock` pins Nix inputs.
+The output is `build/kernel8.img`. The build ID defaults to the current short
+Git commit and can be overridden with `PIE8_BUILD_ID`.
 
-## Prepare a microSD card
+## Deploy
 
-The script never partitions, formats, mounts, or targets a block device. Create
-an MBR or GPT FAT32 partition by your normal system procedure, mount it, verify
-the mount path carefully, and pass an **empty directory** at that path:
+Create and mount an empty FAT32 boot partition using your normal system tools.
+The preparation script never partitions, formats, or mounts media, and refuses
+a non-empty destination:
 
 ```sh
 ./scripts/build.sh
@@ -50,83 +38,55 @@ the mount path carefully, and pass an **empty directory** at that path:
 sync
 ```
 
-The script refuses a non-empty destination. It downloads and checksum-verifies
-`bootcode.bin`, `start.elf`, `fixup.dat`, and their Broadcom licence from the
-official `raspberrypi/firmware` repository at revision
-`cd2a1f1b67266d85f8c00dd9c2190fb8f7b48465`. It then installs those files,
-`boot/config.txt`, and `build/kernel8.img`. Network-free alternative: manually
-copy the same four pinned firmware files plus `boot/config.txt` and
-`build/kernel8.img` to the root of an empty FAT boot partition. Do not copy the
-Linux `kernel*.img` files from the firmware repository.
+It installs `kernel8.img`, `config.txt`, and checksum-verified Raspberry Pi
+firmware pinned at revision
+`cd2a1f1b67266d85f8c00dd9c2190fb8f7b48465`. Updating existing milestone-001
+media is intentionally manual: empty its boot partition after preserving any
+needed files, then run the same command. The boot configuration is unchanged:
+AArch64, fixed 250 MHz VPU core clock for UART/SPI calculation, no device tree.
 
-The resulting partition contains:
+## Run diagnostics
 
-```text
-bootcode.bin  start.elf  fixup.dat  LICENCE.broadcom
-config.txt    kernel8.img
-```
-
-## UART connection and boot
-
-Use a **3.3 V TTL** USB-to-serial adapter. A 5 V or RS-232-level adapter can
-damage the Pi. With power disconnected, wire:
-
-- Pi GPIO14/TXD, physical pin 8, to adapter RX.
-- Pi GPIO15/RXD, physical pin 10, to adapter TX (optional for this milestone).
-- Pi GND, for example physical pin 6, to adapter GND.
-
-Do not connect the adapter's power lead. Open the terminal before powering the
-Pi:
+Read [hardware.md](docs/hardware.md) before applying power. Connect a 3.3 V TTL
+serial adapter and start:
 
 ```sh
 picocom --baud 115200 --databits 8 --parity n --stopbits 1 /dev/ttyUSB0
 ```
 
-Expected output (build ID varies):
+On boot, UART reports version/build, EL, core, generic-counter frequency, SPI
+configuration, display initialization, and each startup colour transfer time.
+The display cycles red, green, blue, white, and black, then shows uptime, eight
+button indicators, total presses, and SPI/display information. Buttons emit
+pressed/released UART events with timestamps and completed press duration.
 
-```text
-PIE8 bare-metal firmware
-version: 0.1.0
-build: 0123456789ab
-exception level: EL1
-CPU core: 0
-Rust initialization: OK
-```
+No physical hardware result is claimed by this repository. Record the board
+revision, panel markings, observed colours/orientation, UART log, and button
+results when testing.
 
-This repository has not established a physical boot result until a user runs
-that procedure on hardware and records it.
+## Layout
 
-## Troubleshooting
+- `crates/pie8-core`: portable button state machine and RGB565 graphics.
+- `crates/pie8-rpi`: BCM2837 GPIO, mini UART, SPI0, generic timer, and CPU access.
+- `firmware`: startup/vectors, board wiring, ST7789 commands, and diagnostics.
+- `tools/image-inspect`: host raw-image sanity checking.
+- `boot` and `scripts`: boot configuration, build, checks, and safe SD staging.
 
-- No UART text: confirm a common ground, adapter RX connected to pin 8, 115200
-  8N1, a 3.3 V adapter, and that `enable_uart=1` and `core_freq=250` remain in
-  `config.txt`.
-- Coloured splash or Linux boots: the card contains stale files or the PIE8
-  partition is not the boot partition. Re-stage to an empty FAT partition.
-- Repeating/garbled characters: check that `core_freq=250` was not removed and
-  that hardware flow control is disabled.
-- Green activity LED pattern: consult Raspberry Pi's boot diagnostics; first
-  checksum the copied firmware files and `kernel8.img` against the build output.
-- Permission denied on the serial port: use the host's serial-access group
-  (commonly `dialout`) or an appropriate temporary device rule.
+See [architecture.md](docs/architecture.md), [hardware.md](docs/hardware.md), and
+[roadmap.md](docs/roadmap.md).
 
-## Pi 3 and Zero 2 W notes
+## Current limitations
 
-Both boards use a Cortex-A53-class BCM2837 family SoC, the `0x3f000000`
-peripheral base, the `0x80000` AArch64 kernel load address, and mini UART on
-GPIO14/15 under this configuration. The current firmware intentionally disables
-device-tree loading, so it does not depend on board DTBs. Board-specific clock,
-power, Wi-Fi/Bluetooth, LED, and later peripheral routing still need physical
-verification on each model. The Zero 2 W has a smaller thermal/power envelope;
-future timing must not assume Pi 3 sustained clocks. Neither board is presently
-hardware-qualified by this repository.
+- The display controller is unconfirmed. The code sends ST7789 commands and
+  cannot identify a controller because prototype MISO is not connected.
+- SPI is blocking and polling at an estimated 7.8125 MHz; there is no DMA.
+- Button input is polled at approximately 1 ms with 10 ms debounce. Small region
+  transfers temporarily extend that interval; details are in the architecture
+  document. Interrupts remain masked.
+- There is no audio, filesystem, USB, heap, scheduler, multicore application,
+  display autodetection, or tracker sequencing.
+- Pi 3 and Zero 2 W share the implemented BCM2837 peripheral base and Cortex-A53
+  architecture, but this milestone still needs physical validation on both.
 
-## References and licensing
-
-The implementation was written for PIE8 from the Arm architecture manuals, the
-BCM2835 ARM Peripherals manual (the BCM2837 peripheral programming model used
-here), and official Raspberry Pi boot/UART documentation; it does not copy a
-tutorial or third-party startup implementation. Links and exact decisions are
-recorded in `docs/architecture.md`. PIE8 source is MIT licensed. Downloaded
-Raspberry Pi firmware remains under `LICENCE.broadcom`, which the preparation
-script installs beside it.
+PIE8 source is MIT licensed. Downloaded Raspberry Pi boot firmware retains its
+Broadcom licence, installed beside the firmware binaries.
