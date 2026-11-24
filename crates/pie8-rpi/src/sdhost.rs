@@ -49,6 +49,10 @@ const HCFG_WIDE_INT: u32 = 1 << 1;
 const EDM_FIFO_COUNT_MASK: u32 = 0x1f0;
 const EDM_FIFO_COUNT_SHIFT: u32 = 4;
 const EDM_FORCE_DATA_MODE: u32 = 1 << 19;
+const EDM_FSM_MASK: u32 = 0xf;
+const EDM_FSM_IDENT: u32 = 0;
+const EDM_FSM_DATA: u32 = 1;
+const EDM_FSM_READWAIT: u32 = 4;
 const CORE_CLOCK_HZ: u32 = 250_000_000;
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -332,10 +336,10 @@ impl SdHost {
         }
         let words = match response {
             Response::Long => [
-                read32(SDRSP0),
-                read32(SDRSP0 + 4),
-                read32(SDRSP0 + 8),
                 read32(SDRSP0 + 12),
+                read32(SDRSP0 + 8),
+                read32(SDRSP0 + 4),
+                read32(SDRSP0),
             ],
             _ => [read32(SDRSP0), 0, 0, 0],
         };
@@ -361,7 +365,7 @@ impl SdHost {
         while offset < BLOCK_SIZE {
             let status = read32(SDHSTS);
             state.diagnostics.status = status;
-            let mut debug = read32(SDEDM);
+            let debug = read32(SDEDM);
             state.diagnostics.debug = debug;
             if status & HSTS_ERROR != 0 {
                 return Err(SdError::Command {
@@ -376,16 +380,42 @@ impl SdHost {
                 offset += 4;
                 continue;
             }
-            if debug & 0xf == 5 {
-                debug |= EDM_FORCE_DATA_MODE;
-                write32(SDEDM, debug);
+            if self.timer.deadline_expired(start, 500_000) {
+                return Err(SdError::Timeout);
+            }
+        }
+        self.finish_read(state)?;
+        write32(SDHSTS, read32(SDHSTS) & 0x07f8);
+        Ok(())
+    }
+
+    /// Waits for the data FSM to become idle. SDHOST can remain in READWAIT
+    /// after the final FIFO word; the documented recovery is FORCE_DATA_MODE.
+    fn finish_read(&self, state: &mut State) -> Result<(), SdError> {
+        let start = self.timer.ticks();
+        loop {
+            let debug = read32(SDEDM);
+            let status = read32(SDHSTS);
+            state.diagnostics.debug = debug;
+            state.diagnostics.status = status;
+            if status & HSTS_ERROR != 0 {
+                return Err(SdError::Command {
+                    command: 17,
+                    status,
+                });
+            }
+            match debug & EDM_FSM_MASK {
+                EDM_FSM_IDENT | EDM_FSM_DATA => return Ok(()),
+                EDM_FSM_READWAIT => {
+                    write32(SDEDM, debug | EDM_FORCE_DATA_MODE);
+                    return Ok(());
+                }
+                _ => {}
             }
             if self.timer.deadline_expired(start, 500_000) {
                 return Err(SdError::Timeout);
             }
         }
-        write32(SDHSTS, read32(SDHSTS) & 0x07f8);
-        Ok(())
     }
 }
 

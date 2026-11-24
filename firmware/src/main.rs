@@ -485,18 +485,22 @@ fn handle_press(
 }
 
 fn scan_samples(state: &mut AppState<'_>, sd: &SdHost, directory: Option<DirectoryEntry>) {
+    state.sample_error = None;
     state.browser_entries.fill(None);
     state.browser_count = 0;
     state.browser_selection = 0;
     state.browser_directory = directory;
     let Some(partition) = state.partition else {
+        state.sample_error = Some("NO FAT32 PARTITION");
         return;
     };
     let Ok(fs) = Fat32::mount(sd, partition) else {
+        state.sample_error = Some("FAT32 MOUNT FAILED");
         return;
     };
     let root_samples = if directory.is_none() {
         let Ok(samples) = fs.find_path("samples") else {
+            state.sample_error = Some("/SAMPLES NOT FOUND");
             return;
         };
         Some(samples)
@@ -504,16 +508,21 @@ fn scan_samples(state: &mut AppState<'_>, sd: &SdHost, directory: Option<Directo
         directory
     };
     state.browser_directory = root_samples;
-    let _ = fs.enumerate(root_samples.as_ref(), |entry| {
-        if state.browser_count == state.browser_entries.len() {
-            return false;
-        }
-        if entry.is_directory() || entry.is_wav() {
-            state.browser_entries[state.browser_count] = Some(*entry);
-            state.browser_count += 1;
-        }
-        true
-    });
+    if fs
+        .enumerate(root_samples.as_ref(), |entry| {
+            if state.browser_count == state.browser_entries.len() {
+                return false;
+            }
+            if entry.is_directory() || entry.is_wav() {
+                state.browser_entries[state.browser_count] = Some(*entry);
+                state.browser_count += 1;
+            }
+            true
+        })
+        .is_err()
+    {
+        state.sample_error = Some("DIRECTORY READ FAILED");
+    }
 }
 
 fn load_selected_sample(state: &mut AppState<'_>, sd: &SdHost, timer: &Timer) {
@@ -959,7 +968,12 @@ fn draw_samples_page(state: &AppState<'_>) {
         .ok();
         surface.text(4, 40, text.as_str(), Rgb565::CYAN);
     } else {
-        surface.text(4, 40, "NO /SAMPLES ENTRIES", Rgb565::YELLOW);
+        surface.text(
+            4,
+            40,
+            state.sample_error.unwrap_or("NO WAV/DIRECTORY ENTRIES"),
+            Rgb565::YELLOW,
+        );
     }
     if let Some(id) = state.loaded_sample {
         if let Some(sample) = state.samples.get(id) {
