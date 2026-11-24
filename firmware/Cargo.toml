@@ -1,0 +1,17 @@
+[package]
+name = "pie8-firmware"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+build = "build.rs"
+
+[[bin]]
+name = "pie8-firmware"
+path = "src/main.rs"
+test = false
+bench = false
+
+[dependencies]
+pie8-core = { path = "../crates/pie8-core" }
+pie8-rpi = { path = "../crates/pie8-rpi" }

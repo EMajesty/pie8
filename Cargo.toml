@@ -1,0 +1,24 @@
+[workspace]
+resolver = "2"
+members = [
+    "crates/pie8-core",
+    "crates/pie8-rpi",
+    "firmware",
+    "tools/image-inspect",
+]
+
+[workspace.package]
+version = "0.1.0"
+edition = "2024"
+license = "MIT"
+repository = "https://github.com/EMajesty/pie8"
+
+[profile.release]
+codegen-units = 1
+debug = true
+lto = "fat"
+opt-level = "s"
+panic = "abort"
+
+[profile.dev]
+panic = "abort"

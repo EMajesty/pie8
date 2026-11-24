@@ -1,0 +1,8 @@
+[alias]
+firmware = "build --release --package pie8-firmware --target aarch64-unknown-none"
+
+[target.aarch64-unknown-none]
+rustflags = [
+    "-C", "link-arg=-Tfirmware/linker.ld",
+    "-C", "link-arg=--gc-sections",
+]

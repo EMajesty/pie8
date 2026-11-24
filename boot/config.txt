@@ -1,0 +1,8 @@
+# PIE8 bare-metal boot configuration for Raspberry Pi 3 and Zero 2 W.
+arm_64bit=1
+kernel=kernel8.img
+enable_uart=1
+core_freq=250
+device_tree=
+disable_commandline_tags=1
+disable_splash=1

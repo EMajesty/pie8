@@ -1,0 +1,6 @@
+[package]
+name = "pie8-image-inspect"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
