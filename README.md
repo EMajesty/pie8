@@ -6,6 +6,11 @@ development and Raspberry Pi Zero 2 W on a future custom carrier. Milestone
 benchmarks above the verified read-only SD/FAT32 stack. There is no Linux
 runtime on the target.
 
+The research-only [tracker UI specification](docs/ui/reference-study.md) defines
+an M8-prioritized eight-button interaction model, spatial screen map, visual
+system, desktop simulator boundary, and original 320×240 mockups. It does not
+yet implement or replace the diagnostic UI.
+
 ## Verified baseline
 
 Milestones 002 through 004B have booted successfully on a physical Pi 3. Display
