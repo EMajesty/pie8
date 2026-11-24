@@ -34,6 +34,10 @@
               git
               gnumake
               picocom
+              dosfstools
+              mtools
+              python3
+              util-linux
             ];
             RUST_BACKTRACE = "1";
           };

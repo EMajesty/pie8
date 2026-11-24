@@ -1,0 +1,9 @@
+[package]
+name = "pie8-storage-inspect"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+
+[dependencies]
+pie8-core = { path = "../../crates/pie8-core", features = ["std"] }

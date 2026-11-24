@@ -2,7 +2,7 @@ use core::{arch::asm, cell::UnsafeCell};
 
 const TABLE_ENTRIES: usize = 512;
 const BLOCK_SIZE: u64 = 2 * 1024 * 1024;
-const RAM_MAPPED_BYTES: u64 = 16 * 1024 * 1024;
+pub const FALLBACK_RAM_BYTES: u64 = 16 * 1024 * 1024;
 const PERIPHERAL_START: u64 = 0x3f00_0000;
 const PERIPHERAL_END: u64 = 0x4000_0000;
 
@@ -31,9 +31,33 @@ unsafe extern "C" {
 
 #[derive(Clone, Copy, Debug)]
 pub struct MemoryMap {
+    pub detected_ram_bytes: Option<u64>,
     pub ram_mapped_bytes: u64,
     pub peripheral_start: u64,
     pub peripheral_end: u64,
+}
+
+#[derive(Clone, Copy, Debug)]
+pub struct OwnedRegion {
+    pub start: usize,
+    pub length: usize,
+}
+
+unsafe extern "C" {
+    static __image_end: u8;
+}
+
+/// Returns the cacheable region exclusively available to the sample arena.
+/// The linked image owns everything below `__image_end`; the firmware-reported
+/// mapped limit bounds the other end. Future DMA pools must be carved out first.
+pub fn sample_region(map: MemoryMap) -> Option<OwnedRegion> {
+    let image_end = core::ptr::addr_of!(__image_end) as usize;
+    let start = image_end.checked_add(63)? & !63;
+    let end = usize::try_from(map.ram_mapped_bytes).ok()?;
+    (start < end).then_some(OwnedRegion {
+        start,
+        length: end - start,
+    })
 }
 
 /// Builds an identity map and enables EL1 stage-1 translation and both caches.
@@ -41,7 +65,12 @@ pub struct MemoryMap {
 /// Only the first 16 MiB is mapped as usable Normal memory. This contains the
 /// complete firmware image, tables, framebuffer, and stack on both supported
 /// boards without claiming the firmware-reserved top of physical RAM.
-pub fn enable_mmu_and_caches() -> MemoryMap {
+pub fn enable_mmu_and_caches(detected_ram_bytes: Option<u64>) -> MemoryMap {
+    let verified = detected_ram_bytes
+        .filter(|size| *size >= FALLBACK_RAM_BYTES && *size <= PERIPHERAL_START)
+        .unwrap_or(FALLBACK_RAM_BYTES);
+    // Never map a partial 2 MiB block beyond firmware-reported ARM memory.
+    let ram_mapped_bytes = verified / BLOCK_SIZE * BLOCK_SIZE;
     // SAFETY: Core 0 is the only running core; translation is disabled and these
     // aligned tables are exclusively owned until this initialization completes.
     unsafe {
@@ -51,7 +80,7 @@ pub fn enable_mmu_and_caches() -> MemoryMap {
         l2.fill(0);
 
         l1[0] = (L2_TABLE.0.get() as u64 & 0x0000_ffff_ffff_f000) | DESCRIPTOR_VALID_TABLE;
-        for address in (0..RAM_MAPPED_BYTES).step_by(BLOCK_SIZE as usize) {
+        for address in (0..ram_mapped_bytes).step_by(BLOCK_SIZE as usize) {
             l2[(address / BLOCK_SIZE) as usize] =
                 address | DESCRIPTOR_VALID_BLOCK | ACCESS_FLAG | INNER_SHAREABLE;
         }
@@ -92,7 +121,8 @@ pub fn enable_mmu_and_caches() -> MemoryMap {
         asm!("msr SCTLR_EL1, {value}", "isb", value = in(reg) sctlr, options(nostack));
     }
     MemoryMap {
-        ram_mapped_bytes: RAM_MAPPED_BYTES,
+        detected_ram_bytes,
+        ram_mapped_bytes,
         peripheral_start: PERIPHERAL_START,
         peripheral_end: PERIPHERAL_END,
     }

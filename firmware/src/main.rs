@@ -23,7 +23,7 @@ use pie8_core::{
 use pie8_rpi::{
     cpu,
     gpio::{Function, Pull},
-    memory,
+    mailbox, memory,
     mini_uart::MiniUart,
     spi::Spi0,
     timer::Timer,
@@ -37,7 +37,7 @@ const FULL_SCREEN: Rect = Rect {
     width: WIDTH as u32,
     height: HEIGHT as u32,
 };
-const SPI_DIVIDERS: [u16; 4] = [32, 16, 10, 8];
+const SPI_DIVIDERS: [u16; 4] = [8, 10, 16, 32];
 
 #[repr(align(64))]
 struct Framebuffer(UnsafeCell<[u16; WIDTH * HEIGHT]>);
@@ -55,6 +55,8 @@ enum Page {
     Colors,
     Performance,
     Audio,
+    Storage,
+    Samples,
 }
 
 impl Page {
@@ -63,15 +65,19 @@ impl Page {
             Self::Buttons => Self::Colors,
             Self::Colors => Self::Performance,
             Self::Performance => Self::Audio,
-            Self::Audio => Self::Buttons,
+            Self::Audio => Self::Storage,
+            Self::Storage => Self::Samples,
+            Self::Samples => Self::Buttons,
         }
     }
     fn previous(self) -> Self {
         match self {
-            Self::Buttons => Self::Audio,
+            Self::Buttons => Self::Samples,
             Self::Colors => Self::Buttons,
             Self::Performance => Self::Colors,
             Self::Audio => Self::Performance,
+            Self::Storage => Self::Audio,
+            Self::Samples => Self::Storage,
         }
     }
 }
@@ -91,6 +97,9 @@ struct AppState {
     generator_active: bool,
     audio_blocks: u64,
     audio_late_blocks: u64,
+    detected_ram_bytes: Option<u64>,
+    mapped_ram_bytes: u64,
+    sample_arena_bytes: usize,
 }
 
 #[unsafe(no_mangle)]
@@ -99,7 +108,9 @@ extern "C" fn kernel_main() -> ! {
     let current_el = cpu::current_el();
     let timer = Timer::new();
     let uncached = benchmark::run_cpu(&timer);
-    let memory_map = memory::enable_mmu_and_caches();
+    let detected_memory = mailbox::arm_memory(&timer, 100_000).ok();
+    let memory_map = memory::enable_mmu_and_caches(detected_memory.map(|m| u64::from(m.size)));
+    let sample_region = memory::sample_region(memory_map);
     let cached = benchmark::run_cpu(&timer);
     let mut uart = MiniUart::new();
     writeln!(
@@ -163,6 +174,9 @@ extern "C" fn kernel_main() -> ! {
         generator_active: false,
         audio_blocks: 0,
         audio_late_blocks: 0,
+        detected_ram_bytes: memory_map.detected_ram_bytes,
+        mapped_ram_bytes: memory_map.ram_mapped_bytes,
+        sample_arena_bytes: sample_region.map_or(0, |region| region.length),
     };
     draw_page(&state, current_el);
     if display_ok {
@@ -313,8 +327,8 @@ fn handle_press(
                     display.set_spi_divider(SPI_DIVIDERS[state.spi_index]);
                 }
                 3 => {
-                    state.spi_index = 0;
-                    display.set_spi_divider(SPI_DIVIDERS[0]);
+                    state.spi_index = 3;
+                    display.set_spi_divider(SPI_DIVIDERS[3]);
                 }
                 _ => {}
             }
@@ -352,6 +366,7 @@ fn handle_press(
             draw_page(state, current_el);
             true
         }
+        Page::Storage | Page::Samples => false,
     }
 }
 
@@ -405,6 +420,8 @@ fn draw_page(state: &AppState, current_el: u64) {
         Page::Colors => draw_colors_page(state),
         Page::Performance => draw_performance_page(state),
         Page::Audio => draw_audio_page(state),
+        Page::Storage => draw_storage_page(state),
+        Page::Samples => draw_samples_page(state),
     }
 }
 
@@ -545,7 +562,7 @@ fn draw_performance_page(state: &AppState) {
         y += 12;
     }
     surface.text(4, 190, "B1 RUN SPI B2 RERUN CPU", Rgb565::YELLOW);
-    surface.text(4, 203, "SPI RESTORES SAFE 7812 KHZ", Rgb565::GREEN);
+    surface.text(4, 203, "SPI RESTORES DEFAULT 31250 KHZ", Rgb565::GREEN);
 }
 
 fn draw_audio_page(state: &AppState) {
@@ -602,6 +619,47 @@ fn draw_audio_stats(state: &AppState) {
     text.clear();
     write!(text, "LATE BLOCKS {} UNDERRUN N/A", state.audio_late_blocks).ok();
     surface.text(4, 167, text.as_str(), Rgb565::WHITE);
+}
+
+fn draw_storage_page(state: &AppState) {
+    let mut surface = framebuffer_surface();
+    page_header(&mut surface, "STORAGE DIAGNOSTIC");
+    let mut text = TextBuffer::new();
+    write!(
+        text,
+        "ARM RAM {} MIB",
+        state.detected_ram_bytes.map_or(0, |n| n / 1_048_576)
+    )
+    .ok();
+    surface.text(4, 26, text.as_str(), Rgb565::WHITE);
+    text.clear();
+    write!(text, "MAPPED {} MIB", state.mapped_ram_bytes / 1_048_576).ok();
+    surface.text(4, 40, text.as_str(), Rgb565::WHITE);
+    surface.text(4, 64, "SD: NOT INITIALIZED", Rgb565::YELLOW);
+    surface.text(4, 78, "ROUTING QUERY BLOCKED", Rgb565::YELLOW);
+    surface.text(4, 102, "PARTITION: N/A FAT32: N/A", Rgb565::WHITE);
+    surface.text(4, 116, "READ RATE: N/A LAST: ROUTING", Rgb565::WHITE);
+    surface.text(4, 146, "NO SD WRITE COMMANDS PRESENT", Rgb565::GREEN);
+}
+
+fn draw_samples_page(state: &AppState) {
+    let mut surface = framebuffer_surface();
+    page_header(&mut surface, "SAMPLE BROWSER");
+    surface.text(4, 26, "PHYSICAL SD UNAVAILABLE", Rgb565::YELLOW);
+    surface.text(4, 42, "HOST FAT32/WAV STACK READY", Rgb565::GREEN);
+    let mut text = TextBuffer::new();
+    write!(
+        text,
+        "SAMPLE ARENA {} MIB",
+        state.sample_arena_bytes / 1_048_576
+    )
+    .ok();
+    surface.text(4, 66, text.as_str(), Rgb565::WHITE);
+    surface.text(4, 90, "SELECTED: NONE", Rgb565::WHITE);
+    surface.text(4, 104, "FORMAT: PCM16/24 48KHZ", Rgb565::WHITE);
+    surface.text(4, 118, "LOAD TIME: N/A MEMORY: 0", Rgb565::WHITE);
+    surface.horizontal_line(8, 174, 304, Rgb565::new(48, 48, 48));
+    surface.text(4, 190, "B1 LOAD B2 RELEASE INACTIVE", Rgb565::WHITE);
 }
 
 fn button_rect(index: usize) -> Rect {

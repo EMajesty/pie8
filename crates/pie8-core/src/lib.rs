@@ -1,9 +1,18 @@
 #![no_std]
 
+#[cfg(any(test, feature = "std"))]
+extern crate std;
+
+pub mod arena;
 pub mod audio;
 pub mod benchmark;
+pub mod block;
 pub mod buttons;
+pub mod fat32;
 pub mod graphics;
+pub mod partition;
+pub mod sample;
+pub mod wav;
 
 /// Text printed after the architecture-specific runtime has initialized.
 pub const RUST_READY_MESSAGE: &str = "Rust initialization: OK";

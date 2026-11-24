@@ -1,31 +1,24 @@
-# Prototype hardware and validation
+# Hardware, validation, and test procedure
 
-## Physical validation record
+## Validation record
 
-Reported physical test on Raspberry Pi 3 using milestone-002 commit
-`b10e10a3a86c8853be8aa194a8b6db10fbf213e7`:
+Physical Raspberry Pi 3 testing through milestone 003 confirms:
 
-Confirmed:
+- Bare-metal boot, display initialization/text, all eight buttons, held-state
+  visualization, press counting, and interactive diagnostic pages.
+- Correct display colours with inversion **OFF** and **RGB** order.
+- All selectable 7.8125, 15.625, 25, and 31.25 MHz SPI settings appeared to
+  work while tested.
+- Existing display/button behavior remained operational with MMU/caches.
 
-- Bare-metal firmware booted.
-- Display initialization and bitmap text rendering worked.
-- All eight buttons, held-state visualization, and press counting worked.
-
-Observed:
-
-- Intended red, green, blue, white, black screens appeared cyan, magenta,
-  yellow, and black. This suggests inversion but does not prove controller type.
-
-Not tested:
-
-- UART output.
-- Milestone-003 MMU/cache operation, benchmarks, runtime colour changes, faster
-  SPI clocks, audio processing timing, or any physical audio output.
-- Raspberry Pi Zero 2 W.
+This does not qualify 31.25 MHz signal integrity, temperature/voltage margins,
+or long-duration stability. Quantitative benchmarks and UART remain unrecorded.
+Mailbox memory discovery, storage pages, FAT/WAV loading, and Zero 2 W remain
+unverified on hardware.
 
 ## Prototype wiring
 
-Software uses BCM numbering; physical numbers are the 40-pin header.
+Software uses BCM numbering; physical numbers refer to the 40-pin header.
 
 | Function | BCM | Physical | Function | BCM | Physical |
 |---|---:|---:|---|---:|---:|
@@ -38,42 +31,39 @@ Software uses BCM numbering; physical numbers are the 40-pin header.
 | UART TX | 14 | 8 | Button 7 | 12 | 32 |
 | UART RX | 15 | 10 | Button 8 | 6 | 31 |
 
-Button inputs use internal pull-ups and short to ground when pressed. LCD power
-is 3.3 V. Backlight GPIO18 is logic control, not a power source. GPIO18–21
-conflict with future native I²S and remain unchanged for this prototype.
+Buttons short to ground and use pull-ups. LCD supply is 3.3 V; backlight GPIO18
+is logic only. GPIO18–21 conflict with future I²S and remain unchanged now.
 
-## Milestone-003 physical test
+## Future carrier direction
 
-1. Keep the known-working milestone-002 card available for recovery. Prepare a
-   separate empty FAT partition with the commands in the README.
-2. Power the Pi 3 with the existing display/buttons wiring. Confirm the colour
-   page appears; failure before it may indicate MMU/cache initialization.
-3. Confirm all eight labelled swatches. If labels match, leave inversion OFF and
-   RGB. Otherwise press B1 for inversion, then B2 for RGB/BGR, and record the
-   exact combination and photograph.
-4. Press B3 to try 15.625, 25, and 31.25 MHz. At each speed inspect edges/text
-   for corruption. Press B4 to return to 7.8125 MHz immediately.
-5. Use B8 to reach Performance. Press B1 once, wait for all four full-screen
-   transfers, and photograph/transcribe every result. Confirm it restores the
-   safe SPI rate. Press B2 and record CPU/memory/render results.
-6. Navigate to Button Test and repeat individual and simultaneous presses,
-   noting that B7/B8 navigate pages.
-7. Navigate to Audio. Confirm it clearly says no output/backend blocked. Exercise
-   waveform/frequency/gain and generator start/stop; verify block and late counts
-   change. Expect silence from the jack.
-8. If a 3.3 V TTL adapter is available, connect TX pin 8 to adapter RX and common
-   ground only, open 115200 8N1, and capture boot/benchmark/button logs. Never use
-   RS-232 or 5 V levels and do not connect adapter power.
-9. Power-cycle and repeat the working colour/SPI settings on Zero 2 W later; do
-   not infer that result from Pi 3.
+The Zero 2 W carrier is planned to combine USB-C power/charging/data/USB MIDI,
+rechargeable battery, custom I²S DAC or codec, stereo headphone/line output,
+TRS Type A MIDI input, and possibly MIDI output/stereo input. No electrical
+design or pin allocation is finalized. Pi 3 PWM audio is explicitly deprioritized.
 
-## Troubleshooting
+## Milestone 004 physical test
 
-- Blank immediately after update: restore the prior card, capture UART if
-  possible, and report whether an exception line contains ESR/ELR/FAR.
-- Complementary colours: toggle inversion. Red/blue swapped: toggle RGB/BGR.
-- Shift/mirroring: retain documented offsets/orientation testing from milestone
-  002; controller identity is still unconfirmed without MISO.
-- Corruption only at higher SPI speed: press B4 and record the highest stable
-  calculated speed. Faster clocks are experiments, not new defaults.
-- No analog audio: expected. The PWM/DMA backend is intentionally absent.
+1. Keep the working milestone 003 card. Update a separate mounted boot FAT
+   partition using `prepare-sd.sh`; optionally copy fixtures with
+   `install-samples.sh`. Neither script formats media.
+2. Boot the Pi 3. Confirm Colours initially reports inversion OFF, RGB, and
+   31250 kHz. Recheck all colours/buttons before testing storage pages.
+3. Navigate with B8 to Storage. Photograph the detected ARM RAM and mapped MiB.
+   It must be at least 16 MiB and plausible for the firmware memory split.
+   A zero detected value with 16 MiB mapped means mailbox fallback.
+4. Confirm Storage explicitly reports `SD: NOT INITIALIZED` and routing error.
+   This is the expected milestone result, not an SD-card failure.
+5. Navigate to Samples. Confirm the arena capacity is nonzero and the page says
+   physical SD unavailable. Load/release buttons are intentionally inactive.
+6. Re-run Performance and record every numerical result. Verify the display
+   returns to 31.25 MHz; B4 on Colours must restore 7.8125 MHz at any time.
+7. Exercise the audio processing page while repeatedly changing pages. Physical
+   audio remains unavailable and silence is expected.
+8. For UART, use only a 3.3 V TTL adapter: Pi TX physical 8 to adapter RX and
+   common ground, 115200 8N1. Never attach RS-232/5 V or adapter power.
+9. Repeat on Zero 2 W only after preserving a recovery card. Record detected RAM
+   and never infer compatibility from the Pi 3 result.
+
+If boot fails after the update, restore milestone 003 and capture any UART
+ESR/ELR/FAR line. If memory is implausible, report both detected/mapped values
+before attempting storage work. No destructive SD diagnostic exists.

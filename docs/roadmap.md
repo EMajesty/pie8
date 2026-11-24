@@ -1,35 +1,36 @@
 # Roadmap
 
-## Milestone 001 — bootstrap
+## Completed baseline
 
-Reproducible AArch64 image, single-core EL1 startup, UART, and pinned SD staging.
+- Milestone 001: reproducible AArch64 boot image, EL1 startup, UART, SD staging.
+- Milestone 002: display/text/buttons physically confirmed on Pi 3.
+- Milestone 003: MMU/caches and interactive diagnostics physically confirmed;
+  inversion OFF, RGB, and all SPI rates work in the reported test. Benchmarks,
+  UART, long-term 31.25 MHz integrity, and Zero 2 W remain unverified.
 
-## Milestone 002 — hardware foundation
+## Milestone 004 — storage and sample loading
 
-Display/text/eight buttons/held visualization/counting physically confirmed on
-Pi 3. UART and Zero 2 W remain untested. Colour inversion issue recorded.
+Implemented host-testable foundation:
 
-## Milestone 003 — runtime performance and initial audio (current)
+- Mailbox ARM-memory discovery, dynamic identity map, fallback, and sample arena.
+- Strictly read-only block abstraction, MBR/FAT32 traversal, host images.
+- PCM16/24 mono/stereo 48 kHz WAV parsing/conversion and sample metadata.
+- Reproducible partitioned FAT32/WAV fixtures and safe sample copy tooling.
+- Storage/sample diagnostic pages and documented physical-SD routing blocker.
 
-- EL1 MMU, caches, bounded identity map, Device MMIO, and DMA coherency contract.
-- On-screen pre/post-cache CPU/memory/render and multi-speed SPI benchmarks.
-- Runtime inversion/RGB/BGR controls and labelled eight-colour test.
-- Allocation-free 48 kHz stereo float processing and test generators.
-- PWM/DMA analog backend explicitly blocked pending authoritative clock/routing,
-  DMA-channel, and bus-address evidence.
+Exit work: establish a firmware/device-tree-based SD routing contract for Pi 3
+and Zero 2 W, then add polling card initialization, CID/CSD/capacity, SDHC block
+addressing, bounded single/multi-block reads, recovery, throughput, browser/load
+controls, and physical validation. No write support is planned.
 
-Exit evidence: Pi 3 MMU boot, correct colour settings, stable SPI ceiling,
-captured benchmark values, audio-generator scheduling stats, UART capture, and
-exception-path test. Then repeat safe configuration on Zero 2 W.
+## Next audio milestone
 
-## Milestone 004 — DMA audio proof
+Continue host-side engine/render tests and on-device DSP benchmarks. Do not
+implement Pi 3 PWM. After selecting I²S DAC/codec hardware and resolving the
+prototype GPIO18–21 conflict, build a separate continuous DMA backend with
+verified bus addressing/coherency, underrun accounting, and clean start/stop.
 
-- Resolve Pi 3 PWM backend blockers or formally retire that temporary route.
-- Integrate PCM5102A as a separate I²S/DMA backend after rewiring GPIO18–21.
-- Prove continuous 48 kHz stereo, cache ownership, underrun accounting, clean
-  start/stop, and display activity during playback on an oscilloscope/audio test.
+## Later
 
-## Later work
-
-Validated display configuration, storage, tracker sequencing, synthesis and
-sampling, final UI/controls, power/thermal behavior, recovery, and updates.
+Tracker sequencing, instruments, project format, USB MIDI, final carrier PCB,
+battery/power management, audio/MIDI I/O qualification, recovery, and updates.

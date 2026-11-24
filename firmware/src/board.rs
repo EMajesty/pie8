@@ -21,8 +21,8 @@ pub const UART_TX: Pin = Pin::new(14); // physical 8
 pub const UART_RX: Pin = Pin::new(15); // physical 10
 
 pub const CORE_CLOCK_HZ: u32 = 250_000_000;
-/// Even divider 32 gives 7.8125 MHz from the fixed 250 MHz core clock.
-pub const SPI_CLOCK_DIVIDER: u16 = 32;
+/// Verified prototype default: divider 8 gives 31.25 MHz. Divider 32 remains fallback.
+pub const SPI_CLOCK_DIVIDER: u16 = 8;
 pub const SPI_TIMEOUT_US: u64 = 100_000;
 
 // Keep these explicit: clone modules often require different values.
