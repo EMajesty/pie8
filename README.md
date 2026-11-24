@@ -1,9 +1,9 @@
 # PIE8
 
 PIE8 is a portable bare-metal Rust music tracker targeting Raspberry Pi 3 for
-development and Raspberry Pi Zero 2 W on a future custom carrier. Milestone 004
-adds firmware-reported memory discovery, a sample arena, and portable read-only
-MBR/FAT32/WAV tooling. There is no Linux runtime on the target.
+development and Raspberry Pi Zero 2 W on a future custom carrier. Milestone
+004B adds read-only physical boot-card access through BCM2835 SDHOST, connected
+to the existing MBR/FAT32/WAV stack. There is no Linux runtime on the target.
 
 ## Verified baseline
 
@@ -12,7 +12,7 @@ initialization/text, all eight buttons, indicators/counting, diagnostic pages,
 inversion OFF with RGB order, and every selectable SPI rate worked. This is a
 functional observation, not signal-integrity or long-duration qualification at
 31.25 MHz. Quantitative benchmark values and UART remain untested. Milestone 004
-memory discovery and storage behavior are not physically verified.
+memory discovery and all 004B SD behavior are not physically verified.
 
 Prototype defaults are inversion OFF, RGB order, and 31.25 MHz SPI. Colour-page
 B3 cycles rates and B4 restores the conservative 7.8125 MHz fallback. B7/B8
@@ -39,9 +39,19 @@ To install samples on an existing mounted boot partition without formatting it:
 sync
 ```
 
-The files are copied below `/samples`. The current target cannot read them yet;
-this establishes the intended layout while the physical SD controller blocker
-is resolved.
+The files are copied below `/samples`; no card write API exists in firmware.
+
+To generate and install the complete diagnostic fixture set:
+
+```sh
+./scripts/generate-storage-fixtures.sh /tmp/pie8-fixtures
+./scripts/install-samples.sh /run/media/$USER/PIE8BOOT /tmp/pie8-fixtures/samples/*
+sync
+```
+
+This adds mono PCM16, stereo PCM16, stereo PCM24, a four-second sample, nested
+directories, a long filename, and an intentionally unsupported 44.1 kHz WAV.
+It does not format the card or remove unrelated contents.
 
 ## Reproducible host storage tests
 
@@ -52,8 +62,8 @@ cargo run -p pie8-storage-inspect -- image /tmp/pie8-fixtures/pie8-fat32.img sam
 cargo run -p pie8-storage-inspect -- wav /tmp/pie8-fixtures/samples/drums/kick.wav
 ```
 
-The generator creates a partitioned FAT32 image plus 48 kHz stereo PCM16 and
-PCM24 WAVs. It only creates/overwrites paths under the explicitly supplied
+The generator creates a partitioned FAT32 image plus the diagnostic WAV set.
+It only creates/overwrites paths under the explicitly supplied
 output directory; it never accepts a block device.
 
 ## Current storage scope
@@ -69,11 +79,20 @@ Only MBR partition types `0x0b`/`0x0c`, 512-byte sectors, FAT32, and ASCII LFN
 characters are supported. GPT, exFAT, FAT12/16, Unicode LFN conversion,
 resampling, writes, and hot-plug are unsupported.
 
-Physical SD access is blocked because Pi 3/Zero 2 W firmware can route the
-microSD and Wi-Fi between Arasan SDHCI and Broadcom SDHOST, while PIE8 has no
-device-tree/routing query yet. No speculative controller registers and no SD
-write/erase commands were added. PWM audio is retired from active work; audio
-development remains host-side until I²S hardware arrives.
+Physical access now uses the established Pi 3/Zero 2 W external-card route:
+BCM2835 SDHOST at `0x3f202000`, GPIO48--53 ALT0. The Arasan/GPIO34--39 Wi-Fi
+path is not initialized. Reads use bounded polling and CMD17; a multi-block API
+request is currently a sequence of single-block operations. See the detailed
+[controller decision](docs/sd-controller.md). No SD write/erase command exists.
+The Storage page exposes raw bring-up diagnostics and B1 retry. The Samples
+page enumerates `/samples`, enters nested directories, loads supported WAVs into
+the existing arena, displays metadata/waveform/load time, and releases the
+arena with B2. A large polling read can temporarily delay button polling; this
+is measured during hardware validation rather than hidden behind a scheduler.
+
+For a card already staged by milestone 004, replacing `kernel8.img` alone is
+sufficient: 004B retains the same `config.txt` and pinned firmware bundle. A
+new card still requires `prepare-sd.sh`.
 
 See [architecture](docs/architecture.md), [hardware/test procedure](docs/hardware.md),
 and [roadmap](docs/roadmap.md).

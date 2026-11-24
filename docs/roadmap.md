@@ -16,12 +16,13 @@ Implemented host-testable foundation:
 - Strictly read-only block abstraction, MBR/FAT32 traversal, host images.
 - PCM16/24 mono/stereo 48 kHz WAV parsing/conversion and sample metadata.
 - Reproducible partitioned FAT32/WAV fixtures and safe sample copy tooling.
-- Storage/sample diagnostic pages and documented physical-SD routing blocker.
+- Deterministic SDHOST external-card routing, polling initialization, card
+  identity/capacity, read-only block access, FAT mount and on-screen retry/error
+  diagnostics (awaiting physical validation).
 
-Exit work: establish a firmware/device-tree-based SD routing contract for Pi 3
-and Zero 2 W, then add polling card initialization, CID/CSD/capacity, SDHC block
-addressing, bounded single/multi-block reads, recovery, throughput, browser/load
-controls, and physical validation. No write support is planned.
+Exit work: physical Pi 3 then Zero 2 W validation, tune any observed SDHOST
+state-machine differences, validate the sample browser/load controls, and
+consider native CMD18 after CMD17 is proven. No write support is planned.
 
 ## Next audio milestone
 

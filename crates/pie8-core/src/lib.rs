@@ -12,6 +12,7 @@ pub mod fat32;
 pub mod graphics;
 pub mod partition;
 pub mod sample;
+pub mod sd;
 pub mod wav;
 
 /// Text printed after the architecture-specific runtime has initialized.

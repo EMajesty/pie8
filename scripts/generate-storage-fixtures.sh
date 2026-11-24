@@ -2,23 +2,35 @@
 set -euo pipefail
 if [[ $# -ne 1 ]]; then echo "usage: $0 OUTPUT_DIRECTORY" >&2; exit 2; fi
 output=$1
-mkdir -p "$output/samples/drums"
-python3 - "$output/samples/drums/kick.wav" "$output/samples/Long Sample Name.wav" <<'PY'
+mkdir -p "$output/samples/drums" "$output/samples/long"
+python3 - "$output/samples/drums/mono-pcm16.wav" \
+  "$output/samples/drums/stereo-pcm16.wav" \
+  "$output/samples/Long Stereo PCM24 Sample Name.wav" \
+  "$output/samples/long/longer-sample.wav" \
+  "$output/samples/unsupported-44100hz.wav" <<'PY'
 import math, sys, wave
-for path, frequency, width in ((sys.argv[1], 80, 2), (sys.argv[2], 440, 3)):
+specs = (
+    (sys.argv[1], 80, 2, 1, 48000, 4800),
+    (sys.argv[2], 160, 2, 2, 48000, 4800),
+    (sys.argv[3], 440, 3, 2, 48000, 4800),
+    (sys.argv[4], 220, 2, 2, 48000, 48000 * 4),
+    (sys.argv[5], 330, 2, 2, 44100, 4410),
+)
+for path, frequency, width, channels, rate, count in specs:
     with wave.open(path, "wb") as wav:
-        wav.setnchannels(2); wav.setsampwidth(width); wav.setframerate(48000)
+        wav.setnchannels(channels); wav.setsampwidth(width); wav.setframerate(rate)
         frames=bytearray()
-        for n in range(4800):
-            value=int(math.sin(2*math.pi*frequency*n/48000)*((1 << (width*8-1))-1)*0.25)
-            packed=value.to_bytes(width,"little",signed=True); frames.extend(packed+packed)
+        for n in range(count):
+            value=int(math.sin(2*math.pi*frequency*n/rate)*((1 << (width*8-1))-1)*0.25)
+            packed=value.to_bytes(width,"little",signed=True); frames.extend(packed*channels)
         wav.writeframes(frames)
 PY
 image="$output/pie8-fat32.img"
-truncate -s 66M "$image"
+truncate -s 65M "$image"
 printf 'label: dos\nstart=2048, size=131072, type=c\n' | sfdisk "$image" >/dev/null
 mkfs.fat -F 32 -n PIE8TEST --offset 2048 "$image" 65536 >/dev/null
-mmd -i "$image@@1048576" ::samples ::samples/drums
-mcopy -i "$image@@1048576" "$output/samples/drums/kick.wav" ::samples/drums/
-mcopy -i "$image@@1048576" "$output/samples/Long Sample Name.wav" ::samples/
+mmd -i "$image@@1048576" ::samples ::samples/drums ::samples/long
+mcopy -i "$image@@1048576" "$output/samples/drums/mono-pcm16.wav" "$output/samples/drums/stereo-pcm16.wav" ::samples/drums/
+mcopy -i "$image@@1048576" "$output/samples/Long Stereo PCM24 Sample Name.wav" "$output/samples/unsupported-44100hz.wav" ::samples/
+mcopy -i "$image@@1048576" "$output/samples/long/longer-sample.wav" ::samples/long/
 echo "generated $image and WAV fixtures under $output/samples"

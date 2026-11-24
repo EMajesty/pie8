@@ -13,8 +13,8 @@ Physical Raspberry Pi 3 testing through milestone 003 confirms:
 
 This does not qualify 31.25 MHz signal integrity, temperature/voltage margins,
 or long-duration stability. Quantitative benchmarks and UART remain unrecorded.
-Mailbox memory discovery, storage pages, FAT/WAV loading, and Zero 2 W remain
-unverified on hardware.
+Mailbox memory discovery, SDHOST card access, FAT/WAV loading, and Zero 2 W
+remain unverified on hardware.
 
 ## Prototype wiring
 
@@ -41,29 +41,42 @@ rechargeable battery, custom I²S DAC or codec, stereo headphone/line output,
 TRS Type A MIDI input, and possibly MIDI output/stereo input. No electrical
 design or pin allocation is finalized. Pi 3 PWM audio is explicitly deprioritized.
 
-## Milestone 004 physical test
+## Milestone 004B physical SD test
 
-1. Keep the working milestone 003 card. Update a separate mounted boot FAT
-   partition using `prepare-sd.sh`; optionally copy fixtures with
-   `install-samples.sh`. Neither script formats media.
-2. Boot the Pi 3. Confirm Colours initially reports inversion OFF, RGB, and
+1. Preserve the known-working card image. If the card already has the milestone
+   004 bundle and unchanged `config.txt`, mount its FAT boot partition and copy
+   only `build/kernel8.img` over `kernel8.img`. A new/unknown card needs the
+   complete pinned `prepare-sd.sh` procedure. Neither operation formats media.
+2. Generate and install fixtures without deleting unrelated files:
+
+   ```sh
+   ./scripts/generate-storage-fixtures.sh /tmp/pie8-fixtures
+   ./scripts/install-samples.sh /run/media/$USER/PIE8BOOT /tmp/pie8-fixtures/samples/*
+   sync
+   ```
+
+3. Boot the Pi 3. Confirm Colours initially reports inversion OFF, RGB, and
    31250 kHz. Recheck all colours/buttons before testing storage pages.
-3. Navigate with B8 to Storage. Photograph the detected ARM RAM and mapped MiB.
-   It must be at least 16 MiB and plausible for the firmware memory split.
-   A zero detected value with 16 MiB mapped means mailbox fallback.
-4. Confirm Storage explicitly reports `SD: NOT INITIALIZED` and routing error.
-   This is the expected milestone result, not an SD-card failure.
-5. Navigate to Samples. Confirm the arena capacity is nonzero and the page says
-   physical SD unavailable. Load/release buttons are intentionally inactive.
-6. Re-run Performance and record every numerical result. Verify the display
-   returns to 31.25 MHz; B4 on Colours must restore 7.8125 MHz at any time.
-7. Exercise the audio processing page while repeatedly changing pages. Physical
-   audio remains unavailable and silence is expected.
+4. Navigate to Storage. It must show `SDHOST 3F202000 GPIO48-53 ALT0`, a
+   nonzero board revision, `READY`, plausible card capacity, a FAT32 mount and
+   nonzero read throughput. Photograph all values. If it fails, photograph the
+   stage, last command/response and HSTS; press B1 once to perform a complete
+   retry without rebooting and record whether the values change.
+5. Navigate to Samples. B3/B4 select entries, B5 enters a directory and B6
+   returns to `/samples`. Select and B1-load each supported fixture. Confirm
+   bit depth, channels, 48000 Hz, duration, bytes, load time and waveform.
+   B2 must release the loaded arena. The 44.1 kHz fixture must report
+   `UNSUPPORTED WAV`, never load or play at the wrong rate.
+6. Load the longer fixture, release it, and load another file. Repeat directory
+   enumeration after an SD retry. Confirm button/display behavior remains
+   responsive. Firmware performs only reads; do not remove power while the host
+   computer is writing fixtures.
+7. Re-run Performance and record every numerical result. Verify the display
+   returns to 31.25 MHz; B4 on Colours restores 7.8125 MHz.
 8. For UART, use only a 3.3 V TTL adapter: Pi TX physical 8 to adapter RX and
    common ground, 115200 8N1. Never attach RS-232/5 V or adapter power.
-9. Repeat on Zero 2 W only after preserving a recovery card. Record detected RAM
-   and never infer compatibility from the Pi 3 result.
-
-If boot fails after the update, restore milestone 003 and capture any UART
-ESR/ELR/FAR line. If memory is implausible, report both detected/mapped values
-before attempting storage work. No destructive SD diagnostic exists.
+9. Repeat on Zero 2 W with a recovery card. Expect the same SDHOST/GPIO route;
+   record board revision, capacity, FAT result and throughput independently.
+If boot fails after the update, restore the prior kernel and capture any UART
+ESR/ELR/FAR line. If Storage fails, report the exact on-screen raw values before
+changing configuration. No destructive SD diagnostic exists.

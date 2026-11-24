@@ -26,9 +26,10 @@ their exclusive CPU/device ownership contract and 64-byte cache-line rules.
 ## Read-only storage layers
 
 `ReadBlockDevice` exposes only block count and reads of complete 512-byte
-blocks. Implementations are an in-memory fixture and a seekable host image.
-There is intentionally no write method. The Raspberry Pi physical implementation
-is deferred because runtime routing between SDHOST and Arasan is unresolved.
+blocks. Implementations are an in-memory fixture, a seekable host image, and a
+BCM2835 SDHOST programmed-I/O device. There is intentionally no write method.
+The physical profile explicitly routes external microSD GPIO48--53 ALT0 and
+leaves the Arasan/GPIO34--39 Wi-Fi path untouched; see `sd-controller.md`.
 
 The internal FAT32 reader was chosen over `embedded-sdmmc` 0.9 after evaluation.
 That library is mature, no_std, allocation-free, and includes LFN iteration, but
@@ -55,16 +56,15 @@ PCM24 stereo 6, versus 8 for float stereo. Metadata records ID, bounded filename
 channels, rate, bit depth, frames, duration, arena bytes, and offset. Reset
 unloads the entire initial library; individual compaction is intentionally absent.
 
-## SD controller blocker
+## SD controller strategy
 
-BCM2837 has Arasan SDHCI and Broadcom SDHOST. Established Pi 3 configurations
-route SDHOST to the external microSD pins 48–53 and Arasan to SDIO Wi-Fi, but
-firmware/device-tree configuration can swap them. Zero 2 W also has onboard
-Wi-Fi. PIE8 does not yet parse the firmware device tree or query an equivalent
-routing contract, and the published peripheral manual does not fully define
-the board routing/clock setup. Implementing one controller unconditionally
-could address Wi-Fi rather than the card. No physical init, capacity, throughput,
-or recovery claim is therefore made.
+BCM2837 has Arasan SDHCI and Broadcom SDHOST. Pi 3B/3B+/Zero 2 W device trees
+consistently route SDHOST to external microSD GPIO48--53 ALT0 and Arasan to
+Wi-Fi GPIO34--39 ALT3. PIE8 establishes that board profile explicitly and does
+not rely on firmware state or load a device tree. The driver resets SDHOST,
+uses 400 kHz identification then 25 MHz transfer clock, supports SDHC/SDSC
+addressing, exposes CID/CSD/OCR diagnostics, and performs bounded read-only
+CMD17 PIO. Native CMD18 and physical validation remain outstanding.
 
 ## References
 
