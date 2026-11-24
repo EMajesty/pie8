@@ -29,6 +29,8 @@ vectors_end="$(symbol_address __vectors_end)"
 framebuffer_start="$(symbol_address __framebuffer_start)"
 framebuffer_end="$(symbol_address __framebuffer_end)"
 stack_bottom="$(symbol_address __stack_bottom)"
+tables_start="$(symbol_address __translation_tables_start)"
+tables_end="$(symbol_address __translation_tables_end)"
 
 if (( (0x$vectors_start & 0x7ff) != 0 )); then
   printf 'exception vectors are not 2048-byte aligned: 0x%s\n' "$vectors_start" >&2
@@ -47,3 +49,12 @@ if (( 0x$framebuffer_end > 0x$stack_bottom )); then
   exit 1
 fi
 printf 'verified vectors, 153600-byte framebuffer, and non-overlapping stack\n'
+if (( (0x$tables_start & 0xfff) != 0 || 0x$tables_end - 0x$tables_start != 8192 )); then
+  printf 'translation tables are not two 4K-aligned pages\n' >&2
+  exit 1
+fi
+if (( 0x$stack_bottom >= 16 * 1024 * 1024 )); then
+  printf 'firmware runtime memory exceeds the mapped 16 MiB RAM window\n' >&2
+  exit 1
+fi
+printf 'verified two aligned translation tables inside the 16 MiB RAM map\n'

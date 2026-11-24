@@ -2,11 +2,14 @@
 
 pub mod cpu;
 pub mod gpio;
+pub mod memory;
 pub mod mini_uart;
 pub mod spi;
 pub mod timer;
 
 const PERIPHERAL_BASE: usize = 0x3f00_0000;
+
+core::arch::global_asm!(include_str!("cache.S"));
 
 #[inline(always)]
 pub(crate) fn read32(address: usize) -> u32 {

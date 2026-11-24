@@ -1,92 +1,68 @@
 # PIE8
 
-PIE8 is a portable bare-metal Rust music tracker project for Raspberry Pi. The
-development platform is Raspberry Pi 3 and the intended final board is
-Raspberry Pi Zero 2 W. Milestone 002 provides an interactive hardware
-diagnostic: UART fault reporting, timer-driven active-low buttons, and a
-320×240 RGB565 display path using BCM2837 SPI0 and an ST7789 controller
-hypothesis. It is not yet tracker firmware.
+PIE8 is a portable bare-metal Rust music tracker project targeting Raspberry Pi
+3 during development and Raspberry Pi Zero 2 W for the eventual device.
+Milestone 003 adds cached virtual memory, on-device performance diagnostics,
+interactive display colour correction, and a portable 48 kHz stereo audio
+processing foundation.
 
-## Build and verify
+## Verified hardware baseline
 
-The Nix flake pins stable Rust 1.85.0, `aarch64-unknown-none`, LLVM tools,
-formatting/lint tools, and picocom:
+Milestone 002 was physically booted on a Raspberry Pi 3. The display initialized,
+text rendered, all eight buttons worked, held-state visualization worked, and
+press counts advanced. The intended red/green/blue/white startup sequence
+appeared cyan/magenta/yellow/black, consistent with display inversion but not
+conclusive controller identification. UART was not tested. No milestone-003 MMU,
+benchmark, colour-correction, or audio behavior has been physically verified.
+
+## Build and deploy
 
 ```sh
 nix develop
 ./scripts/check.sh
-```
-
-Build only:
-
-```sh
-nix develop --command ./scripts/build.sh
-```
-
-The output is `build/kernel8.img`. The build ID defaults to the current short
-Git commit and can be overridden with `PIE8_BUILD_ID`.
-
-## Deploy
-
-Create and mount an empty FAT32 boot partition using your normal system tools.
-The preparation script never partitions, formats, or mounts media, and refuses
-a non-empty destination:
-
-```sh
 ./scripts/build.sh
 ./scripts/prepare-sd.sh /run/media/$USER/PIE8BOOT
 sync
 ```
 
-It installs `kernel8.img`, `config.txt`, and checksum-verified Raspberry Pi
-firmware pinned at revision
-`cd2a1f1b67266d85f8c00dd9c2190fb8f7b48465`. Updating existing milestone-001
-media is intentionally manual: empty its boot partition after preserving any
-needed files, then run the same command. The boot configuration is unchanged:
-AArch64, fixed 250 MHz VPU core clock for UART/SPI calculation, no device tree.
+`build/kernel8.img` is the bootable output. The staging destination must be an
+empty mounted FAT partition; the script never formats or mounts media and
+refuses a non-empty directory. Boot firmware remains checksum-pinned. The Nix
+flake pins stable Rust 1.85.0 and all cross-build tools.
 
-## Run diagnostics
+## Diagnostic controls
 
-Read [hardware.md](docs/hardware.md) before applying power. Connect a 3.3 V TTL
-serial adapter and start:
+Every page uses Button 7 for previous and Button 8 for next.
 
-```sh
-picocom --baud 115200 --databits 8 --parity n --stopbits 1 /dev/ttyUSB0
-```
+- Button page: shows eight active-low held indicators and total press count.
+- Colour page: B1 toggles inversion, B2 toggles RGB/BGR, B3 cycles SPI speed,
+  and B4 immediately restores the known-working 7.8125 MHz divider.
+- Performance page: B1 measures full/64×64 SPI transfers at 7.8125, 15.625,
+  25, and 31.25 MHz, then restores 7.8125 MHz. B2 reruns cached CPU/memory and
+  rendering benchmarks. Results are displayed because UART remains untested.
+- Audio page: B1 starts/stops generator processing, B2 changes waveform, B3/B4
+  adjust frequency, and B5/B6 adjust gain. This exercises processing only and
+  intentionally produces no physical sound; the PWM/DMA backend is blocked.
 
-On boot, UART reports version/build, EL, core, generic-counter frequency, SPI
-configuration, display initialization, and each startup colour transfer time.
-The display cycles red, green, blue, white, and black, then shows uptime, eight
-button indicators, total presses, and SPI/display information. Buttons emit
-pressed/released UART events with timestamps and completed press duration.
+The colour page simultaneously labels red, green, blue, cyan, magenta, yellow,
+white, and black. Compare labels with observed colours, try inversion first,
+then RGB/BGR. The controller is still only an ST7789 hypothesis.
 
-No physical hardware result is claimed by this repository. Record the board
-revision, panel markings, observed colours/orientation, UART log, and button
-results when testing.
+## Current scope and blockers
 
-## Layout
+The firmware has no Linux runtime, heap, scheduler, filesystem, USB, tracker
+sequencing, I²S backend, or working analog-audio backend. It boots silent.
 
-- `crates/pie8-core`: portable button state machine and RGB565 graphics.
-- `crates/pie8-rpi`: BCM2837 GPIO, mini UART, SPI0, generic timer, and CPU access.
-- `firmware`: startup/vectors, board wiring, ST7789 commands, and diagnostics.
-- `tools/image-inspect`: host raw-image sanity checking.
-- `boot` and `scripts`: boot configuration, build, checks, and safe SD staging.
+The Pi 3 analog jack is PWM-derived, but a reliable continuous DMA backend is
+not implemented because the published BCM2835 peripheral document does not
+fully specify the clock-manager programming needed to establish an exact audio
+carrier/sample cadence, and authoritative board-specific confirmation of the
+internal GPIO40/GPIO45 routing, DMA channel ownership, and SDRAM bus alias is
+still required. Guessing those values could produce unstable clocks or corrupt
+memory. The UI states this blocker rather than claiming playback.
 
-See [architecture.md](docs/architecture.md), [hardware.md](docs/hardware.md), and
-[roadmap.md](docs/roadmap.md).
-
-## Current limitations
-
-- The display controller is unconfirmed. The code sends ST7789 commands and
-  cannot identify a controller because prototype MISO is not connected.
-- SPI is blocking and polling at an estimated 7.8125 MHz; there is no DMA.
-- Button input is polled at approximately 1 ms with 10 ms debounce. Small region
-  transfers temporarily extend that interval; details are in the architecture
-  document. Interrupts remain masked.
-- There is no audio, filesystem, USB, heap, scheduler, multicore application,
-  display autodetection, or tracker sequencing.
-- Pi 3 and Zero 2 W share the implemented BCM2837 peripheral base and Cortex-A53
-  architecture, but this milestone still needs physical validation on both.
+See [architecture](docs/architecture.md), [hardware and test procedure](docs/hardware.md),
+and [roadmap](docs/roadmap.md).
 
 PIE8 source is MIT licensed. Downloaded Raspberry Pi boot firmware retains its
-Broadcom licence, installed beside the firmware binaries.
+Broadcom licence.

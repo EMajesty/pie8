@@ -1,6 +1,7 @@
 #![no_main]
 #![no_std]
 
+mod benchmark;
 mod board;
 mod display;
 
@@ -10,9 +11,11 @@ use core::{
     panic::PanicInfo,
 };
 
-use display::St7789;
+use benchmark::CpuBenchmarks;
+use display::{ColorOrder, St7789};
 use pie8_core::{
     RUST_READY_MESSAGE,
+    audio::{AudioProcessor, SignalGenerator, StereoFrame, Waveform},
     buttons::{ButtonEventKind, Buttons},
     core_id, exception_level,
     graphics::{Rect, Rgb565, Surface},
@@ -20,6 +23,7 @@ use pie8_core::{
 use pie8_rpi::{
     cpu,
     gpio::{Function, Pull},
+    memory,
     mini_uart::MiniUart,
     spi::Spi0,
     timer::Timer,
@@ -33,50 +37,101 @@ const FULL_SCREEN: Rect = Rect {
     width: WIDTH as u32,
     height: HEIGHT as u32,
 };
+const SPI_DIVIDERS: [u16; 4] = [32, 16, 10, 8];
 
 #[repr(align(64))]
 struct Framebuffer(UnsafeCell<[u16; WIDTH * HEIGHT]>);
-
-// SAFETY: Startup permanently parks every core except core 0. All framebuffer
-// access is serialized by that core's single-threaded diagnostic loop.
+// SAFETY: Startup parks all cores except core 0, which serializes framebuffer access.
 unsafe impl Sync for Framebuffer {}
-
 #[unsafe(link_section = ".framebuffer")]
 static FRAMEBUFFER: Framebuffer = Framebuffer(UnsafeCell::new([0; WIDTH * HEIGHT]));
 
 core::arch::global_asm!(include_str!("boot.S"));
 core::arch::global_asm!(include_str!("vectors.S"));
 
+#[derive(Clone, Copy, Eq, PartialEq)]
+enum Page {
+    Buttons,
+    Colors,
+    Performance,
+    Audio,
+}
+
+impl Page {
+    fn next(self) -> Self {
+        match self {
+            Self::Buttons => Self::Colors,
+            Self::Colors => Self::Performance,
+            Self::Performance => Self::Audio,
+            Self::Audio => Self::Buttons,
+        }
+    }
+    fn previous(self) -> Self {
+        match self {
+            Self::Buttons => Self::Audio,
+            Self::Colors => Self::Buttons,
+            Self::Performance => Self::Colors,
+            Self::Audio => Self::Performance,
+        }
+    }
+}
+
+struct AppState {
+    page: Page,
+    total_presses: u64,
+    inverted: bool,
+    color_order: ColorOrder,
+    spi_index: usize,
+    uncached: CpuBenchmarks,
+    cached: CpuBenchmarks,
+    render_us: u64,
+    spi_full_us: [u64; 4],
+    spi_partial_us: [u64; 4],
+    generator: SignalGenerator,
+    generator_active: bool,
+    audio_blocks: u64,
+    audio_late_blocks: u64,
+}
+
 #[unsafe(no_mangle)]
 extern "C" fn kernel_main() -> ! {
     board::assert_wiring();
     let current_el = cpu::current_el();
-    let mpidr = cpu::mpidr();
     let timer = Timer::new();
+    let uncached = benchmark::run_cpu(&timer);
+    let memory_map = memory::enable_mmu_and_caches();
+    let cached = benchmark::run_cpu(&timer);
     let mut uart = MiniUart::new();
-
-    writeln!(uart, "PIE8 hardware diagnostics").ok();
-    writeln!(uart, "version: {}", env!("CARGO_PKG_VERSION")).ok();
-    writeln!(uart, "build: {}", env!("PIE8_BUILD_ID")).ok();
-    writeln!(uart, "exception level: EL{}", exception_level(current_el)).ok();
-    writeln!(uart, "CPU core: {}", core_id(mpidr)).ok();
-    writeln!(uart, "counter frequency: {} Hz", timer.frequency_hz()).ok();
+    writeln!(
+        uart,
+        "PIE8 runtime/audio diagnostics {} {}",
+        env!("CARGO_PKG_VERSION"),
+        env!("PIE8_BUILD_ID")
+    )
+    .ok();
+    writeln!(
+        uart,
+        "EL{} core {} counter {} Hz",
+        exception_level(current_el),
+        core_id(cpu::mpidr()),
+        timer.frequency_hz()
+    )
+    .ok();
+    writeln!(
+        uart,
+        "MMU+caches enabled; mapped RAM {} MiB; MMIO {:#x}..{:#x}",
+        memory_map.ram_mapped_bytes / 1_048_576,
+        memory_map.peripheral_start,
+        memory_map.peripheral_end
+    )
+    .ok();
     writeln!(uart, "{RUST_READY_MESSAGE}").ok();
 
     for pin in board::BUTTONS {
         pin.set_function(Function::Input);
         pin.set_pull(Pull::Up, &timer);
     }
-
     let spi = Spi0::new(&timer, board::SPI_CLOCK_DIVIDER, board::SPI_TIMEOUT_US);
-    let spi_hz = spi.estimated_hz(board::CORE_CLOCK_HZ);
-    writeln!(
-        uart,
-        "SPI0: mode 0, CE0, divider {}, estimated {} Hz",
-        spi.divider(),
-        spi_hz
-    )
-    .ok();
     let mut display = St7789::new(
         spi,
         board::LCD_DC,
@@ -84,117 +139,112 @@ extern "C" fn kernel_main() -> ! {
         board::LCD_BACKLIGHT,
         board::DISPLAY_CONFIG,
     );
-    let display_ok = match display.init(&timer) {
-        Ok(()) => {
-            writeln!(uart, "display: ST7789 initialization sent").ok();
-            true
-        }
-        Err(error) => {
-            writeln!(uart, "display initialization failed: {error:?}").ok();
-            false
-        }
+    let display_ok = display.init(&timer).is_ok();
+    writeln!(
+        uart,
+        "display init: {} inversion default OFF",
+        if display_ok { "sent" } else { "failed" }
+    )
+    .ok();
+
+    let render_us = benchmark::render(&timer, framebuffer_mut(), WIDTH as u32, HEIGHT as u32);
+    let mut state = AppState {
+        page: Page::Colors,
+        total_presses: 0,
+        inverted: false,
+        color_order: ColorOrder::Rgb,
+        spi_index: 0,
+        uncached,
+        cached,
+        render_us,
+        spi_full_us: [0; 4],
+        spi_partial_us: [0; 4],
+        generator: SignalGenerator::new(),
+        generator_active: false,
+        audio_blocks: 0,
+        audio_late_blocks: 0,
     };
-
-    let mut full_transfer_us = 0;
+    draw_page(&state, current_el);
     if display_ok {
-        for (name, color) in [
-            ("RED", Rgb565::RED),
-            ("GREEN", Rgb565::GREEN),
-            ("BLUE", Rgb565::BLUE),
-            ("WHITE", Rgb565::WHITE),
-            ("BLACK", Rgb565::BLACK),
-        ] {
-            framebuffer_surface().clear(color);
-            let started = timer.micros();
-            if let Err(error) = display.update_region(&timer, framebuffer(), WIDTH, FULL_SCREEN) {
-                writeln!(uart, "display colour test failed on {name}: {error:?}").ok();
-                break;
-            }
-            full_transfer_us = timer.micros().wrapping_sub(started);
-            writeln!(
-                uart,
-                "display colour test: {name}, transfer {full_transfer_us} us"
-            )
-            .ok();
-            timer.delay_ms(180);
-        }
-    }
-
-    draw_dashboard(current_el, spi_hz, full_transfer_us);
-    if display_ok {
-        report_display_error(
+        log_display(
             &mut uart,
             display.update_region(&timer, framebuffer(), WIDTH, FULL_SCREEN),
         );
     }
 
     let mut buttons = Buttons::<8>::default();
-    let mut total_presses = 0_u64;
-    let mut last_uptime_second = u64::MAX;
     let mut next_poll_ms = timer.millis();
+    let mut next_audio_us = timer.micros();
+    let mut next_status_ms = timer.millis().wrapping_add(1_000);
+    let mut audio_block = [StereoFrame::default(); 128];
 
     loop {
+        let now_us = timer.micros();
+        if state.generator_active && now_us.wrapping_sub(next_audio_us) as i64 >= 0 {
+            let lateness = now_us.wrapping_sub(next_audio_us);
+            if lateness > 2_667 {
+                state.audio_late_blocks += 1;
+            }
+            state.generator.process(&mut audio_block);
+            state.audio_blocks += 1;
+            // Do not spin through a backlog after a blocking display transfer.
+            next_audio_us = now_us.wrapping_add(2_667);
+        }
+
         let now_ms = timer.millis();
         if now_ms.wrapping_sub(next_poll_ms) as i64 >= 0 {
             next_poll_ms = now_ms.wrapping_add(1);
             let samples = board::BUTTONS.map(|pin| !pin.level());
             for event in buttons.update(samples, now_ms).into_iter().flatten() {
-                match event.kind {
-                    ButtonEventKind::Pressed => {
-                        total_presses = total_presses.wrapping_add(1);
-                        writeln!(
-                            uart,
-                            "button {} pressed at {} ms",
-                            event.index + 1,
-                            event.timestamp_ms
-                        )
-                        .ok();
+                if event.kind == ButtonEventKind::Pressed {
+                    state.total_presses += 1;
+                    writeln!(uart, "button {} pressed", event.index + 1).ok();
+                    let redraw = handle_press(
+                        event.index,
+                        &mut state,
+                        &timer,
+                        &mut display,
+                        display_ok,
+                        &mut uart,
+                        current_el,
+                    );
+                    if redraw && display_ok {
+                        log_display(
+                            &mut uart,
+                            display.update_region(&timer, framebuffer(), WIDTH, FULL_SCREEN),
+                        );
                     }
-                    ButtonEventKind::Released => {
-                        writeln!(
-                            uart,
-                            "button {} released at {} ms (held {} ms)",
-                            event.index + 1,
-                            event.timestamp_ms,
-                            event.duration_ms
-                        )
-                        .ok();
-                    }
+                } else {
+                    writeln!(
+                        uart,
+                        "button {} released held={}ms",
+                        event.index + 1,
+                        event.duration_ms
+                    )
+                    .ok();
                 }
-                draw_button(event.index, buttons.is_pressed(event.index));
-                draw_press_count(total_presses);
-                if display_ok {
-                    report_display_error(
-                        &mut uart,
-                        display.update_region(
-                            &timer,
-                            framebuffer(),
-                            WIDTH,
-                            button_indicator_rect(event.index),
-                        ),
-                    );
-                    report_display_error(
-                        &mut uart,
-                        display.update_region(
-                            &timer,
-                            framebuffer(),
-                            WIDTH,
-                            Rect {
-                                x: 4,
-                                y: 171,
-                                width: 180,
-                                height: 11,
-                            },
-                        ),
-                    );
+                if state.page == Page::Buttons {
+                    draw_button_indicator(event.index, buttons.is_pressed(event.index));
+                    if display_ok {
+                        log_display(
+                            &mut uart,
+                            display.update_region(
+                                &timer,
+                                framebuffer(),
+                                WIDTH,
+                                button_indicator_rect(event.index),
+                            ),
+                        );
+                    }
                 }
             }
-            let uptime_second = now_ms / 1_000;
-            if uptime_second != last_uptime_second {
-                last_uptime_second = uptime_second;
-                draw_uptime(uptime_second);
+        }
+        if now_ms.wrapping_sub(next_status_ms) as i64 >= 0 {
+            next_status_ms = now_ms.wrapping_add(1_000);
+            if state.page == Page::Audio {
+                draw_audio_stats(&state);
                 if display_ok {
-                    report_display_error(
+                    log_display(
                         &mut uart,
                         display.update_region(
                             &timer,
@@ -202,9 +252,9 @@ extern "C" fn kernel_main() -> ! {
                             WIDTH,
                             Rect {
                                 x: 4,
-                                y: 39,
-                                width: 190,
-                                height: 10,
+                                y: 151,
+                                width: 310,
+                                height: 38,
                             },
                         ),
                     );
@@ -215,50 +265,364 @@ extern "C" fn kernel_main() -> ! {
     }
 }
 
-fn draw_dashboard(current_el: u64, spi_hz: u32, transfer_us: u64) {
-    let mut surface = framebuffer_surface();
+fn handle_press(
+    index: usize,
+    state: &mut AppState,
+    timer: &Timer,
+    display: &mut St7789,
+    display_ok: bool,
+    uart: &mut MiniUart,
+    current_el: u64,
+) -> bool {
+    if index == 6 {
+        state.generator_active = false;
+        state.page = state.page.previous();
+        draw_page(state, current_el);
+        return true;
+    }
+    if index == 7 {
+        state.generator_active = false;
+        state.page = state.page.next();
+        draw_page(state, current_el);
+        return true;
+    }
+    match state.page {
+        Page::Buttons => {
+            draw_page(state, current_el);
+            true
+        }
+        Page::Colors => {
+            match index {
+                0 => {
+                    state.inverted = !state.inverted;
+                    if display_ok {
+                        log_display(uart, display.set_inverted(timer, state.inverted));
+                    }
+                }
+                1 => {
+                    state.color_order = match state.color_order {
+                        ColorOrder::Rgb => ColorOrder::Bgr,
+                        ColorOrder::Bgr => ColorOrder::Rgb,
+                    };
+                    if display_ok {
+                        log_display(uart, display.set_color_order(timer, state.color_order));
+                    }
+                }
+                2 => {
+                    state.spi_index = (state.spi_index + 1) % SPI_DIVIDERS.len();
+                    display.set_spi_divider(SPI_DIVIDERS[state.spi_index]);
+                }
+                3 => {
+                    state.spi_index = 0;
+                    display.set_spi_divider(SPI_DIVIDERS[0]);
+                }
+                _ => {}
+            }
+            draw_page(state, current_el);
+            true
+        }
+        Page::Performance => {
+            if index == 0 && display_ok {
+                run_spi_benchmarks(state, timer, display, uart);
+            }
+            if index == 1 {
+                state.cached = benchmark::run_cpu(timer);
+                state.render_us =
+                    benchmark::render(timer, framebuffer_mut(), WIDTH as u32, HEIGHT as u32);
+            }
+            draw_page(state, current_el);
+            true
+        }
+        Page::Audio => {
+            match index {
+                0 => state.generator_active = !state.generator_active,
+                1 => state
+                    .generator
+                    .set_waveform(next_waveform(state.generator.waveform())),
+                2 => state
+                    .generator
+                    .set_frequency_hz(state.generator.frequency_hz() - 10.0),
+                3 => state
+                    .generator
+                    .set_frequency_hz(state.generator.frequency_hz() + 10.0),
+                4 => state.generator.set_gain(state.generator.gain() - 0.05),
+                5 => state.generator.set_gain(state.generator.gain() + 0.05),
+                _ => {}
+            }
+            draw_page(state, current_el);
+            true
+        }
+    }
+}
+
+fn run_spi_benchmarks(
+    state: &mut AppState,
+    timer: &Timer,
+    display: &mut St7789,
+    uart: &mut MiniUart,
+) {
+    draw_color_grid();
+    for (index, divider) in SPI_DIVIDERS.into_iter().enumerate() {
+        display.set_spi_divider(divider);
+        let start = timer.micros();
+        if display
+            .update_region(timer, framebuffer(), WIDTH, FULL_SCREEN)
+            .is_ok()
+        {
+            state.spi_full_us[index] = timer.micros().wrapping_sub(start);
+        }
+        let start = timer.micros();
+        if display
+            .update_region(
+                timer,
+                framebuffer(),
+                WIDTH,
+                Rect {
+                    x: 0,
+                    y: 0,
+                    width: 64,
+                    height: 64,
+                },
+            )
+            .is_ok()
+        {
+            state.spi_partial_us[index] = timer.micros().wrapping_sub(start);
+        }
+        writeln!(
+            uart,
+            "SPI divider {divider}: full={}us partial={}us",
+            state.spi_full_us[index], state.spi_partial_us[index]
+        )
+        .ok();
+    }
+    state.spi_index = 0;
+    display.set_spi_divider(SPI_DIVIDERS[0]);
+}
+
+fn draw_page(state: &AppState, current_el: u64) {
+    match state.page {
+        Page::Buttons => draw_buttons_page(state, current_el),
+        Page::Colors => draw_colors_page(state),
+        Page::Performance => draw_performance_page(state),
+        Page::Audio => draw_audio_page(state),
+    }
+}
+
+fn page_header(surface: &mut Surface<'_>, title: &str) {
     surface.clear(Rgb565::BLACK);
-    surface.text(4, 4, "PIE8 HARDWARE DIAGNOSTICS", Rgb565::CYAN);
-    surface.horizontal_line(4, 13, 188, Rgb565::CYAN);
+    surface.text(4, 4, title, Rgb565::CYAN);
+    surface.horizontal_line(4, 14, 312, Rgb565::CYAN);
+    surface.text(4, 228, "B7 PREV  B8 NEXT", Rgb565::WHITE);
+}
+
+fn draw_buttons_page(state: &AppState, current_el: u64) {
+    let mut surface = framebuffer_surface();
+    page_header(&mut surface, "BUTTON TEST");
     let mut text = TextBuffer::new();
     write!(
         text,
-        "VERSION {} BUILD {}",
-        env!("CARGO_PKG_VERSION"),
-        env!("PIE8_BUILD_ID")
+        "EL{} TOTAL PRESSES {}",
+        exception_level(current_el),
+        state.total_presses
     )
     .ok();
-    surface.text(4, 18, text.as_str(), Rgb565::WHITE);
-    text.clear();
-    write!(text, "EXCEPTION EL{}", exception_level(current_el)).ok();
-    surface.text(4, 29, text.as_str(), Rgb565::WHITE);
-    surface.text(4, 40, "UPTIME 0 S", Rgb565::WHITE);
-    text.clear();
-    write!(text, "SPI0 MODE0 CE0 {} KHZ", spi_hz / 1_000).ok();
-    surface.text(4, 51, text.as_str(), Rgb565::WHITE);
-    text.clear();
-    write!(text, "FULL XFER {} US", transfer_us).ok();
-    surface.text(4, 62, text.as_str(), Rgb565::WHITE);
-    surface.text(4, 74, "BUTTONS ACTIVE LOW", Rgb565::YELLOW);
+    surface.text(4, 23, text.as_str(), Rgb565::WHITE);
     for index in 0..8 {
         draw_button_on(&mut surface, index, false);
     }
-    surface.text(4, 173, "TOTAL PRESSES 0", Rgb565::WHITE);
-    surface.text(4, 190, "ST7789 RGB565 320X240", Rgb565::GREEN);
+}
+
+fn draw_colors_page(state: &AppState) {
+    draw_color_grid();
+    let mut surface = framebuffer_surface();
+    surface.fill_rect(
+        Rect {
+            x: 0,
+            y: 0,
+            width: 320,
+            height: 32,
+        },
+        Rgb565::BLACK,
+    );
+    surface.text(4, 3, "DISPLAY COLOUR CONFIG", Rgb565::WHITE);
+    let mut text = TextBuffer::new();
+    write!(
+        text,
+        "INV {} ORDER {} SPI {}KHZ",
+        if state.inverted { "ON" } else { "OFF" },
+        if matches!(state.color_order, ColorOrder::Rgb) {
+            "RGB"
+        } else {
+            "BGR"
+        },
+        board::CORE_CLOCK_HZ / 1_000 / SPI_DIVIDERS[state.spi_index] as u32
+    )
+    .ok();
+    surface.text(4, 15, text.as_str(), Rgb565::WHITE);
+    surface.fill_rect(
+        Rect {
+            x: 0,
+            y: 216,
+            width: 320,
+            height: 24,
+        },
+        Rgb565::BLACK,
+    );
+    surface.text(4, 217, "B1 INV B2 RGB B3 SPEED B4 SAFE", Rgb565::WHITE);
+    surface.text(4, 229, "B7 PREV B8 NEXT", Rgb565::WHITE);
+}
+
+fn draw_color_grid() {
+    let colors = [
+        ("RED", Rgb565::RED, Rgb565::WHITE),
+        ("GREEN", Rgb565::GREEN, Rgb565::BLACK),
+        ("BLUE", Rgb565::BLUE, Rgb565::WHITE),
+        ("CYAN", Rgb565::CYAN, Rgb565::BLACK),
+        ("MAGENTA", Rgb565::MAGENTA, Rgb565::WHITE),
+        ("YELLOW", Rgb565::YELLOW, Rgb565::BLACK),
+        ("WHITE", Rgb565::WHITE, Rgb565::BLACK),
+        ("BLACK", Rgb565::BLACK, Rgb565::WHITE),
+    ];
+    let mut surface = framebuffer_surface();
+    for (index, (label, color, text)) in colors.into_iter().enumerate() {
+        let x = (index % 4) as i32 * 80;
+        let y = 36 + (index / 4) as i32 * 88;
+        surface.fill_rect(
+            Rect {
+                x,
+                y,
+                width: 80,
+                height: 88,
+            },
+            color,
+        );
+        surface.text(x + 5, y + 39, label, text);
+    }
+}
+
+fn draw_performance_page(state: &AppState) {
+    let mut surface = framebuffer_surface();
+    page_header(&mut surface, "PERFORMANCE BENCHMARKS");
+    let mut y = 23;
+    let mut text = TextBuffer::new();
+    for (name, before, after) in [
+        (
+            "INT KOPS",
+            state.uncached.integer_ops_s / 1000,
+            state.cached.integer_ops_s / 1000,
+        ),
+        (
+            "FLOAT KOPS",
+            state.uncached.float_ops_s / 1000,
+            state.cached.float_ops_s / 1000,
+        ),
+        (
+            "COPY KB/S",
+            state.uncached.copy_bytes_s / 1024,
+            state.cached.copy_bytes_s / 1024,
+        ),
+    ] {
+        text.clear();
+        write!(text, "{} OFF {} ON {}", name, before, after).ok();
+        surface.text(4, y, text.as_str(), Rgb565::WHITE);
+        y += 12;
+    }
+    text.clear();
+    write!(text, "RENDER 200 RECTS {} US", state.render_us).ok();
+    surface.text(4, y, text.as_str(), Rgb565::WHITE);
+    y += 18;
+    for (index, divider) in SPI_DIVIDERS.into_iter().enumerate() {
+        text.clear();
+        write!(
+            text,
+            "SPI {}KHZ FULL {} PART {} US",
+            board::CORE_CLOCK_HZ / 1_000 / divider as u32,
+            state.spi_full_us[index],
+            state.spi_partial_us[index]
+        )
+        .ok();
+        surface.text(4, y, text.as_str(), Rgb565::WHITE);
+        y += 12;
+    }
+    surface.text(4, 190, "B1 RUN SPI B2 RERUN CPU", Rgb565::YELLOW);
+    surface.text(4, 203, "SPI RESTORES SAFE 7812 KHZ", Rgb565::GREEN);
+}
+
+fn draw_audio_page(state: &AppState) {
+    {
+        let mut surface = framebuffer_surface();
+        page_header(&mut surface, "AUDIO TESTING");
+        surface.text(4, 24, "PWM DMA BACKEND BLOCKED", Rgb565::YELLOW);
+        surface.text(4, 36, "NO PHYSICAL AUDIO OUTPUT", Rgb565::YELLOW);
+        let mut text = TextBuffer::new();
+        write!(
+            text,
+            "GENERATOR {}",
+            if state.generator_active {
+                "RUNNING"
+            } else {
+                "STOPPED"
+            }
+        )
+        .ok();
+        surface.text(4, 58, text.as_str(), Rgb565::WHITE);
+        text.clear();
+        write!(text, "WAVE {:?}", state.generator.waveform()).ok();
+        surface.text(4, 72, text.as_str(), Rgb565::WHITE);
+        text.clear();
+        write!(
+            text,
+            "FREQ {} HZ GAIN {} PCT",
+            state.generator.frequency_hz() as u32,
+            (state.generator.gain() * 100.0) as u32
+        )
+        .ok();
+        surface.text(4, 86, text.as_str(), Rgb565::WHITE);
+        surface.text(4, 108, "48KHZ STEREO F32 BLOCK 128", Rgb565::GREEN);
+        surface.text(4, 122, "B1 START B2 WAVE B3/4 FREQ", Rgb565::WHITE);
+        surface.text(4, 135, "B5/6 VOLUME", Rgb565::WHITE);
+    }
+    draw_audio_stats(state);
+}
+
+fn draw_audio_stats(state: &AppState) {
+    let mut surface = framebuffer_surface();
+    surface.fill_rect(
+        Rect {
+            x: 4,
+            y: 151,
+            width: 310,
+            height: 38,
+        },
+        Rgb565::BLACK,
+    );
+    let mut text = TextBuffer::new();
+    write!(text, "GENERATED BLOCKS {}", state.audio_blocks).ok();
+    surface.text(4, 153, text.as_str(), Rgb565::WHITE);
+    text.clear();
+    write!(text, "LATE BLOCKS {} UNDERRUN N/A", state.audio_late_blocks).ok();
+    surface.text(4, 167, text.as_str(), Rgb565::WHITE);
 }
 
 fn button_rect(index: usize) -> Rect {
     Rect {
         x: 4 + (index % 4) as i32 * 78,
-        y: 88 + (index / 4) as i32 * 36,
+        y: 52 + (index / 4) as i32 * 52,
         width: 72,
-        height: 28,
+        height: 40,
     }
 }
-
-fn draw_button(index: usize, pressed: bool) {
-    let mut surface = framebuffer_surface();
-    surface.fill_rect(
+fn button_indicator_rect(index: usize) -> Rect {
+    let button = button_rect(index);
+    Rect {
+        x: button.x + 3,
+        y: button.y + 3,
+        width: 10,
+        height: 34,
+    }
+}
+fn draw_button_indicator(index: usize, pressed: bool) {
+    framebuffer_surface().fill_rect(
         button_indicator_rect(index),
         if pressed {
             Rgb565::GREEN
@@ -267,7 +631,6 @@ fn draw_button(index: usize, pressed: bool) {
         },
     );
 }
-
 fn draw_button_on(surface: &mut Surface<'_>, index: usize, pressed: bool) {
     let rect = button_rect(index);
     surface.fill_rect(rect, Rgb565::new(24, 24, 24));
@@ -281,69 +644,31 @@ fn draw_button_on(surface: &mut Surface<'_>, index: usize, pressed: bool) {
     );
     let mut text = TextBuffer::new();
     write!(text, "BUTTON {}", index + 1).ok();
-    surface.text(rect.x + 17, rect.y + 10, text.as_str(), Rgb565::WHITE);
+    surface.text(rect.x + 17, rect.y + 16, text.as_str(), Rgb565::WHITE);
 }
 
-fn button_indicator_rect(index: usize) -> Rect {
-    let button = button_rect(index);
-    Rect {
-        x: button.x + 3,
-        y: button.y + 3,
-        width: 10,
-        height: 22,
+fn next_waveform(waveform: Waveform) -> Waveform {
+    match waveform {
+        Waveform::Silence => Waveform::Sine,
+        Waveform::Sine => Waveform::Triangle,
+        Waveform::Triangle => Waveform::Square,
+        Waveform::Square => Waveform::Silence,
     }
 }
-
-fn draw_uptime(seconds: u64) {
-    let mut surface = framebuffer_surface();
-    surface.fill_rect(
-        Rect {
-            x: 4,
-            y: 39,
-            width: 190,
-            height: 10,
-        },
-        Rgb565::BLACK,
-    );
-    let mut text = TextBuffer::new();
-    write!(text, "UPTIME {seconds} S").ok();
-    surface.text(4, 40, text.as_str(), Rgb565::WHITE);
-}
-
-fn draw_press_count(count: u64) {
-    let mut surface = framebuffer_surface();
-    surface.fill_rect(
-        Rect {
-            x: 4,
-            y: 171,
-            width: 180,
-            height: 11,
-        },
-        Rgb565::BLACK,
-    );
-    let mut text = TextBuffer::new();
-    write!(text, "TOTAL PRESSES {count}").ok();
-    surface.text(4, 173, text.as_str(), Rgb565::WHITE);
-}
-
-fn report_display_error(uart: &mut MiniUart, result: Result<(), pie8_rpi::spi::SpiError>) {
+fn log_display(uart: &mut MiniUart, result: Result<(), pie8_rpi::spi::SpiError>) {
     if let Err(error) = result {
-        writeln!(uart, "display transfer failed: {error:?}").ok();
+        writeln!(uart, "display error: {error:?}").ok();
     }
 }
-
 fn framebuffer_surface() -> Surface<'static> {
     Surface::new(framebuffer_mut(), WIDTH as u32, HEIGHT as u32)
 }
-
 fn framebuffer_mut() -> &'static mut [u16] {
-    // SAFETY: See Framebuffer's Sync invariant. The returned borrow is used only
-    // transiently by the single boot core and never retained across another call.
+    // SAFETY: Only core 0 runs and all mutable framebuffer borrows are transient.
     unsafe { &mut *FRAMEBUFFER.0.get() }
 }
-
 fn framebuffer() -> &'static [u16] {
-    // SAFETY: Single-core access; mutable drawing borrows have ended before reads.
+    // SAFETY: Drawing borrows end before the single core begins an SPI read.
     unsafe { &*FRAMEBUFFER.0.get() }
 }
 
@@ -351,7 +676,6 @@ struct TextBuffer {
     bytes: [u8; 96],
     length: usize,
 }
-
 impl TextBuffer {
     const fn new() -> Self {
         Self {
@@ -363,15 +687,13 @@ impl TextBuffer {
         self.length = 0;
     }
     fn as_str(&self) -> &str {
-        // SAFETY: fmt::Write only accepts valid UTF-8 strings and copies their bytes.
+        // SAFETY: fmt::Write copies only valid UTF-8 into this prefix.
         unsafe { core::str::from_utf8_unchecked(&self.bytes[..self.length]) }
     }
 }
-
 impl fmt::Write for TextBuffer {
     fn write_str(&mut self, text: &str) -> fmt::Result {
-        let remaining = self.bytes.len() - self.length;
-        if text.len() > remaining {
+        if text.len() > self.bytes.len() - self.length {
             return Err(fmt::Error);
         }
         self.bytes[self.length..self.length + text.len()].copy_from_slice(text.as_bytes());
@@ -393,26 +715,22 @@ extern "C" fn exception_handler(vector: u64) -> ! {
     let (esr, elr, far, spsr) = exception_registers();
     let mut uart = MiniUart::new();
     writeln!(uart, "FATAL EXCEPTION vector={vector}").ok();
-    writeln!(uart, "ESR_EL1:  0x{esr:016x}").ok();
-    writeln!(uart, "ELR_EL1:  0x{elr:016x}").ok();
-    writeln!(uart, "FAR_EL1:  0x{far:016x}").ok();
-    writeln!(uart, "SPSR_EL1: 0x{spsr:016x}").ok();
+    writeln!(
+        uart,
+        "ESR={esr:016x} ELR={elr:016x} FAR={far:016x} SPSR={spsr:016x}"
+    )
+    .ok();
     cpu::data_sync_barrier();
     cpu::wait_forever()
 }
-
 fn exception_registers() -> (u64, u64, u64, u64) {
     let esr: u64;
     let elr: u64;
     let far: u64;
     let spsr: u64;
-    // SAFETY: These EL1 fault registers are readable in an EL1 exception handler.
+    // SAFETY: These fault registers are readable while handling an EL1 exception.
     unsafe {
-        core::arch::asm!(
-            "mrs {esr}, ESR_EL1", "mrs {elr}, ELR_EL1", "mrs {far}, FAR_EL1", "mrs {spsr}, SPSR_EL1",
-            esr = out(reg) esr, elr = out(reg) elr, far = out(reg) far, spsr = out(reg) spsr,
-            options(nomem, nostack)
-        );
+        core::arch::asm!("mrs {esr}, ESR_EL1", "mrs {elr}, ELR_EL1", "mrs {far}, FAR_EL1", "mrs {spsr}, SPSR_EL1", esr=out(reg) esr, elr=out(reg) elr, far=out(reg) far, spsr=out(reg) spsr, options(nomem, nostack));
     }
     (esr, elr, far, spsr)
 }

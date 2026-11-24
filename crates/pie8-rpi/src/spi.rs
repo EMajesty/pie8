@@ -57,6 +57,11 @@ impl Spi0 {
         core_clock_hz / self.divider as u32
     }
 
+    pub fn set_divider(&mut self, divider: u16) {
+        self.divider = divider.max(2) & !1;
+        write32(CLK, u32::from(self.divider));
+    }
+
     pub fn write(&mut self, timer: &Timer, bytes: &[u8]) -> Result<(), SpiError> {
         if bytes.is_empty() {
             return Ok(());

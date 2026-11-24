@@ -10,6 +10,7 @@ impl Rgb565 {
     pub const BLUE: Self = Self(0x001f);
     pub const YELLOW: Self = Self(0xffe0);
     pub const CYAN: Self = Self(0x07ff);
+    pub const MAGENTA: Self = Self(0xf81f);
 
     #[must_use]
     pub const fn new(red: u8, green: u8, blue: u8) -> Self {

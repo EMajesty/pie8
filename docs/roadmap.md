@@ -1,36 +1,35 @@
 # Roadmap
 
-## Milestone 001 — bootstrap (complete in software)
+## Milestone 001 — bootstrap
 
-Reproducible AArch64 image, single-core EL1 startup, BSS/stack, UART diagnostics,
-and pinned SD staging. Physical validation remains unrecorded.
+Reproducible AArch64 image, single-core EL1 startup, UART, and pinned SD staging.
 
-## Milestone 002 — hardware foundation (current)
+## Milestone 002 — hardware foundation
 
-- FP/SIMD-safe EL transition, exception vectors/fault UART, ordered MMIO, timer.
-- Central prototype wiring, active-low debounced buttons, SPI0, and ST7789 path.
-- Static RGB565 graphics and interactive regional-update diagnostic dashboard.
-- Host tests and ELF layout assertions.
+Display/text/eight buttons/held visualization/counting physically confirmed on
+Pi 3. UART and Zero 2 W remain untested. Colour inversion issue recorded.
 
-Exit evidence still required: Pi 3 and Zero 2 W UART logs; display controller
-marking/colour/orientation/offset results; measured full and regional transfer
-times; all individual/simultaneous button tests.
+## Milestone 003 — runtime performance and initial audio (current)
 
-## Milestone 003 — validated display and input foundation
+- EL1 MMU, caches, bounded identity map, Device MMIO, and DMA coherency contract.
+- On-screen pre/post-cache CPU/memory/render and multi-speed SPI benchmarks.
+- Runtime inversion/RGB/BGR controls and labelled eight-colour test.
+- Allocation-free 48 kHz stereo float processing and test generators.
+- PWM/DMA analog backend explicitly blocked pending authoritative clock/routing,
+  DMA-channel, and bus-address evidence.
 
-- Resolve controller identity and commit measured panel configuration.
-- Tune SPI from hardware evidence; evaluate DMA only after profiling.
-- Reconcile GPIO18–21 prototype conflicts with the I²S hardware plan.
-- Add repeatable hardware-in-the-loop smoke tests and exception injection test.
+Exit evidence: Pi 3 MMU boot, correct colour settings, stable SPI ceiling,
+captured benchmark values, audio-generator scheduling stats, UART capture, and
+exception-path test. Then repeat safe configuration on Zero 2 W.
 
-## Milestone 004 — deterministic audio proof
+## Milestone 004 — DMA audio proof
 
-- Select I²S audio hardware and final pin allocation.
-- Fixed 48 kHz stereo clocking, DMA ring, underrun diagnostics, and generated
-  test tone with measured latency/jitter.
+- Resolve Pi 3 PWM backend blockers or formally retire that temporary route.
+- Integrate PCM5102A as a separate I²S/DMA backend after rewiring GPIO18–21.
+- Prove continuous 48 kHz stereo, cache ownership, underrun accounting, clean
+  start/stop, and display activity during playback on an oscilloscope/audio test.
 
 ## Later work
 
-Crash-safe microSD storage, tracker data/sequencing, synthesis and sampling,
-final controls/UI, power/thermal design, recovery, and updates. No milestone may
-claim hardware behavior without naming the board, wiring, and captured evidence.
+Validated display configuration, storage, tracker sequencing, synthesis and
+sampling, final UI/controls, power/thermal behavior, recovery, and updates.

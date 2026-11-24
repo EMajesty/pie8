@@ -1,88 +1,79 @@
-# Prototype hardware
+# Prototype hardware and validation
 
-All software uses Broadcom (BCM) GPIO numbering. Physical numbers refer to the
-40-pin Raspberry Pi header.
+## Physical validation record
 
-| Function | BCM GPIO | Physical pin | Configuration |
-|---|---:|---:|---|
-| LCD SCK | 11 | 23 | SPI0 SCLK, ALT0 |
-| LCD MOSI | 10 | 19 | SPI0 MOSI, ALT0 |
-| LCD CS | 8 | 24 | SPI0 CE0, ALT0 |
-| LCD DC | 25 | 22 | output |
-| LCD RESET | 24 | 18 | output, active low |
-| LCD BACKLIGHT | 18 | 12 | logic output only |
-| Button 1 | 21 | 40 | input, internal pull-up |
-| Button 2 | 20 | 38 | input, internal pull-up |
-| Button 3 | 26 | 37 | input, internal pull-up |
-| Button 4 | 16 | 36 | input, internal pull-up |
-| Button 5 | 19 | 35 | input, internal pull-up |
-| Button 6 | 13 | 33 | input, internal pull-up |
-| Button 7 | 12 | 32 | input, internal pull-up |
-| Button 8 | 6 | 31 | input, internal pull-up |
-| UART TX | 14 | 8 | mini UART ALT5 |
-| UART RX | 15 | 10 | mini UART ALT5 |
+Reported physical test on Raspberry Pi 3 using milestone-002 commit
+`b10e10a3a86c8853be8aa194a8b6db10fbf213e7`:
 
-The LCD supply is connected to 3.3 V and ground. The backlight GPIO is a
-logic-level enable, **not a power source**; use the module's intended backlight
-power/driver circuit. Every button shorts its listed GPIO to ground when held,
-so firmware treats low as pressed. Button numbering is provisional and implies
-no tracker function.
+Confirmed:
 
-GPIO18, 19, 20, and 21 conflict with the PCM/I²S signals needed for future
-native audio. They are intentionally retained as the actual prototype
-backlight/button wiring for this milestone. The hardware must be revised or an
-alternative audio/control arrangement chosen before I²S work.
+- Bare-metal firmware booted.
+- Display initialization and bitmap text rendering worked.
+- All eight buttons, held-state visualization, and press counting worked.
 
-## UART safety
+Observed:
 
-Use a 3.3 V TTL adapter, never 5 V TTL or RS-232 voltage levels. With all power
-off, connect Pi pin 8/TX to adapter RX, optionally pin 10/RX to adapter TX, and
-a Pi ground such as pin 6 to adapter ground. Do not connect the adapter power
-lead. Open 115200 8N1 with hardware/software flow control disabled.
+- Intended red, green, blue, white, black screens appeared cyan, magenta,
+  yellow, and black. This suggests inversion but does not prove controller type.
 
-## Display assumption
+Not tested:
 
-The module is advertised as a 3.2-inch 320×240 “ST7789/ILI9488” SPI TFT. PIE8
-currently assumes ST7789: RGB565, 240×320 internal address space rotated into
-320×240 landscape, RGB order, inversion enabled, and zero address offsets.
-There is no MISO connection in the prototype wiring, so controller ID reads are
-not evidence and are not attempted. SPI starts at 7.8125 MHz.
+- UART output.
+- Milestone-003 MMU/cache operation, benchmarks, runtime colour changes, faster
+  SPI clocks, audio processing timing, or any physical audio output.
+- Raspberry Pi Zero 2 W.
 
-## Diagnostic test procedure
+## Prototype wiring
 
-1. Recheck every connection against the table with power removed. Confirm the
-   display is a 3.3 V-compatible module and its backlight is correctly powered.
-2. Prepare the boot partition as described in the README and attach UART.
-3. Start the serial terminal, then power the Pi. Save the complete log.
-4. Confirm UART reaches `Rust initialization: OK`, reports SPI configuration,
-   and says that ST7789 initialization was sent.
-5. Observe red, green, blue, white, and black screens in that order. Record the
-   reported transfer microseconds and any swapped colors, inversion, clipping,
-   mirroring, or shift.
-6. Confirm the dashboard is landscape and fully visible.
-7. Hold each button separately. Its numbered indicator must turn green while
-   held, return dark on release, increment total presses once, and produce one
-   press plus one release UART line with a plausible duration.
-8. Hold several buttons together and confirm all indicators/events operate.
-9. Leave the unit running and confirm uptime advances without UART faults.
-10. Repeat on Pi 3 and Zero 2 W before making compatibility claims.
+Software uses BCM numbering; physical numbers are the 40-pin header.
 
-## Display troubleshooting
+| Function | BCM | Physical | Function | BCM | Physical |
+|---|---:|---:|---|---:|---:|
+| LCD SCK | 11 | 23 | Button 1 | 21 | 40 |
+| LCD MOSI | 10 | 19 | Button 2 | 20 | 38 |
+| LCD CE0 | 8 | 24 | Button 3 | 26 | 37 |
+| LCD DC | 25 | 22 | Button 4 | 16 | 36 |
+| LCD RESET | 24 | 18 | Button 5 | 19 | 35 |
+| LCD BACKLIGHT | 18 | 12 | Button 6 | 13 | 33 |
+| UART TX | 14 | 8 | Button 7 | 12 | 32 |
+| UART RX | 15 | 10 | Button 8 | 6 | 31 |
 
-- **Blank, no backlight:** verify 3.3 V/ground and the module's backlight driver.
-  GPIO18 is only enable logic. Confirm RESET/DC/CE0 pins and inspect UART for an
-  SPI timeout.
-- **Backlight on, all white/black:** verify SCK, MOSI, DC, RESET, and CE0. If the
-  colour test never appears but UART says commands were sent, the controller is
-  likely not ST7789-compatible or CS/DC polarity/wiring is wrong.
-- **Red and blue swapped:** change `DISPLAY_CONFIG.color_order` between `Rgb`
-  and `Bgr` in `firmware/src/board.rs`, rebuild, and repeat the colour test.
-- **Colors appear as negatives:** toggle `DISPLAY_CONFIG.inverted` and retest.
-- **Mirrored/rotated:** choose the appropriate `Orientation` in the same config.
-- **Image shifted or clipped:** determine the module's hidden column/row origin
-  and set `x_offset`/`y_offset`. Test every edge before accepting the values.
-- **Still incompatible:** inspect controller markings or seller schematics. An
-  ILI9488 is typically a 320×480-class controller and often needs different
-  initialization/pixel handling. Capture that evidence before adding a driver.
-- **Unstable at higher SPI speed:** restore divider 32. Smaller even dividers are
-  faster; only increase speed after the conservative configuration is reliable.
+Button inputs use internal pull-ups and short to ground when pressed. LCD power
+is 3.3 V. Backlight GPIO18 is logic control, not a power source. GPIO18–21
+conflict with future native I²S and remain unchanged for this prototype.
+
+## Milestone-003 physical test
+
+1. Keep the known-working milestone-002 card available for recovery. Prepare a
+   separate empty FAT partition with the commands in the README.
+2. Power the Pi 3 with the existing display/buttons wiring. Confirm the colour
+   page appears; failure before it may indicate MMU/cache initialization.
+3. Confirm all eight labelled swatches. If labels match, leave inversion OFF and
+   RGB. Otherwise press B1 for inversion, then B2 for RGB/BGR, and record the
+   exact combination and photograph.
+4. Press B3 to try 15.625, 25, and 31.25 MHz. At each speed inspect edges/text
+   for corruption. Press B4 to return to 7.8125 MHz immediately.
+5. Use B8 to reach Performance. Press B1 once, wait for all four full-screen
+   transfers, and photograph/transcribe every result. Confirm it restores the
+   safe SPI rate. Press B2 and record CPU/memory/render results.
+6. Navigate to Button Test and repeat individual and simultaneous presses,
+   noting that B7/B8 navigate pages.
+7. Navigate to Audio. Confirm it clearly says no output/backend blocked. Exercise
+   waveform/frequency/gain and generator start/stop; verify block and late counts
+   change. Expect silence from the jack.
+8. If a 3.3 V TTL adapter is available, connect TX pin 8 to adapter RX and common
+   ground only, open 115200 8N1, and capture boot/benchmark/button logs. Never use
+   RS-232 or 5 V levels and do not connect adapter power.
+9. Power-cycle and repeat the working colour/SPI settings on Zero 2 W later; do
+   not infer that result from Pi 3.
+
+## Troubleshooting
+
+- Blank immediately after update: restore the prior card, capture UART if
+  possible, and report whether an exception line contains ESR/ELR/FAR.
+- Complementary colours: toggle inversion. Red/blue swapped: toggle RGB/BGR.
+- Shift/mirroring: retain documented offsets/orientation testing from milestone
+  002; controller identity is still unconfirmed without MISO.
+- Corruption only at higher SPI speed: press B4 and record the highest stable
+  calculated speed. Faster clocks are experiments, not new defaults.
+- No analog audio: expected. The PWM/DMA backend is intentionally absent.

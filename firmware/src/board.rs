@@ -32,7 +32,7 @@ pub const DISPLAY_CONFIG: crate::display::PanelConfig = crate::display::PanelCon
     x_offset: 0,
     y_offset: 0,
     orientation: crate::display::Orientation::Landscape,
-    inverted: true,
+    inverted: false,
     color_order: crate::display::ColorOrder::Rgb,
 };
 

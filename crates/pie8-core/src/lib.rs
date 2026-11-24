@@ -1,5 +1,7 @@
 #![no_std]
 
+pub mod audio;
+pub mod benchmark;
 pub mod buttons;
 pub mod graphics;
 

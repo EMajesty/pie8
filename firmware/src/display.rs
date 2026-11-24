@@ -87,6 +87,29 @@ impl St7789 {
         Ok(())
     }
 
+    pub fn set_inverted(&mut self, timer: &Timer, inverted: bool) -> Result<(), SpiError> {
+        self.config.inverted = inverted;
+        self.command(timer, if inverted { 0x21 } else { 0x20 }, &[])
+    }
+
+    pub fn set_color_order(&mut self, timer: &Timer, order: ColorOrder) -> Result<(), SpiError> {
+        self.config.color_order = order;
+        let mut madctl = match self.config.orientation {
+            Orientation::Portrait => 0x00,
+            Orientation::Landscape => 0x60,
+            Orientation::PortraitInverted => 0xc0,
+            Orientation::LandscapeInverted => 0xa0,
+        };
+        if matches!(order, ColorOrder::Bgr) {
+            madctl |= 0x08;
+        }
+        self.command(timer, 0x36, &[madctl])
+    }
+
+    pub fn set_spi_divider(&mut self, divider: u16) {
+        self.spi.set_divider(divider);
+    }
+
     pub fn update_region(
         &mut self,
         timer: &Timer,
