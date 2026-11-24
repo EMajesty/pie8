@@ -79,7 +79,7 @@ impl<'a> Wave<'a> {
         if !matches!(bits, 16 | 24) {
             return Err(WaveError::UnsupportedBits);
         }
-        if rate != 48_000 {
+        if !(8_000..=192_000).contains(&rate) {
             return Err(WaveError::UnsupportedRate);
         }
         let data = data.ok_or(WaveError::MissingData)?;
@@ -174,6 +174,8 @@ mod tests {
         let mut b = wave(16, 1, &[0, 0], false);
         let rate = b.windows(4).position(|x| x == b"fmt ").unwrap() + 12;
         b[rate..rate + 4].copy_from_slice(&44_100u32.to_le_bytes());
+        assert_eq!(Wave::parse(&b).unwrap().sample_rate, 44_100);
+        b[rate..rate + 4].copy_from_slice(&1_000u32.to_le_bytes());
         assert_eq!(Wave::parse(&b).unwrap_err(), WaveError::UnsupportedRate);
         b.truncate(14);
         assert_eq!(Wave::parse(&b).unwrap_err(), WaveError::Truncated)

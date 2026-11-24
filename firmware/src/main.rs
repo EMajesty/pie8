@@ -11,7 +11,7 @@ use core::{
     panic::PanicInfo,
 };
 
-use benchmark::CpuBenchmarks;
+use benchmark::{CpuBenchmarks, DspResult};
 use display::{ColorOrder, St7789};
 use pie8_core::{
     RUST_READY_MESSAGE,
@@ -23,6 +23,7 @@ use pie8_core::{
     graphics::{Rect, Rgb565, Surface},
     partition::{Partition, first_fat32},
     sample::{SampleId, SampleLibrary},
+    sampler::{Direction, LoopMode, Sampler, VoiceParameters},
     wav::Wave,
 };
 use pie8_rpi::{
@@ -63,6 +64,8 @@ enum Page {
     Audio,
     Storage,
     Samples,
+    Sampler,
+    Dsp,
 }
 
 impl Page {
@@ -73,17 +76,21 @@ impl Page {
             Self::Performance => Self::Audio,
             Self::Audio => Self::Storage,
             Self::Storage => Self::Samples,
-            Self::Samples => Self::Buttons,
+            Self::Samples => Self::Sampler,
+            Self::Sampler => Self::Dsp,
+            Self::Dsp => Self::Buttons,
         }
     }
     fn previous(self) -> Self {
         match self {
-            Self::Buttons => Self::Samples,
+            Self::Buttons => Self::Dsp,
             Self::Colors => Self::Buttons,
             Self::Performance => Self::Colors,
             Self::Audio => Self::Performance,
             Self::Storage => Self::Audio,
             Self::Samples => Self::Storage,
+            Self::Sampler => Self::Samples,
+            Self::Dsp => Self::Sampler,
         }
     }
 }
@@ -125,6 +132,16 @@ struct AppState<'a> {
     sample_load_us: u64,
     sample_error: Option<&'static str>,
     waveform: [u8; 64],
+    sampler: Sampler<128>,
+    sampler_voice: Option<usize>,
+    sampler_pitch: i16,
+    sampler_reverse: bool,
+    sampler_loop: LoopMode,
+    sampler_block_us: u64,
+    sampler_max_us: u64,
+    sampler_deadline_misses: u64,
+    dsp_results: [DspResult; 15],
+    dsp_selected: usize,
 }
 
 #[unsafe(no_mangle)]
@@ -234,6 +251,16 @@ extern "C" fn kernel_main() -> ! {
         sample_load_us: 0,
         sample_error: None,
         waveform: [0; 64],
+        sampler: Sampler::new(),
+        sampler_voice: None,
+        sampler_pitch: 0,
+        sampler_reverse: false,
+        sampler_loop: LoopMode::OneShot,
+        sampler_block_us: 0,
+        sampler_max_us: 0,
+        sampler_deadline_misses: 0,
+        dsp_results: [DspResult::default(); 15],
+        dsp_selected: 0,
     };
     scan_samples(&mut state, &sd, None);
     draw_page(&state, current_el);
@@ -252,12 +279,22 @@ extern "C" fn kernel_main() -> ! {
 
     loop {
         let now_us = timer.micros();
-        if state.generator_active && now_us.wrapping_sub(next_audio_us) as i64 >= 0 {
+        if (state.generator_active || state.sampler.active_voice_count() != 0)
+            && now_us.wrapping_sub(next_audio_us) as i64 >= 0
+        {
             let lateness = now_us.wrapping_sub(next_audio_us);
             if lateness > 2_667 {
                 state.audio_late_blocks += 1;
             }
-            state.generator.process(&mut audio_block);
+            if state.sampler.active_voice_count() != 0 {
+                let started = timer.micros();
+                state.sampler.process(&state.samples, &mut audio_block);
+                state.sampler_block_us = timer.micros().wrapping_sub(started);
+                state.sampler_max_us = state.sampler_max_us.max(state.sampler_block_us);
+                state.sampler_deadline_misses += u64::from(state.sampler_block_us > 2_667);
+            } else {
+                state.generator.process(&mut audio_block);
+            }
             state.audio_blocks += 1;
             // Do not spin through a backlog after a blocking display transfer.
             next_audio_us = now_us.wrapping_add(2_667);
@@ -457,6 +494,7 @@ fn handle_press(
             match index {
                 0 => load_selected_sample(state, sd, timer),
                 1 => {
+                    state.sampler.stop_all();
                     state.samples.reset();
                     state.loaded_sample = None;
                     state.sample_error = None;
@@ -481,7 +519,69 @@ fn handle_press(
             draw_page(state, current_el);
             true
         }
+        Page::Sampler => {
+            match index {
+                0 => trigger_sampler(state),
+                1 => {
+                    if let Some(voice) = state.sampler_voice {
+                        state.sampler.release(voice);
+                    }
+                }
+                2 => state.sampler_pitch = (state.sampler_pitch - 1).max(-48),
+                3 => state.sampler_pitch = (state.sampler_pitch + 1).min(48),
+                4 => {
+                    state.sampler_loop = match state.sampler_loop {
+                        LoopMode::OneShot => LoopMode::Forward,
+                        LoopMode::Forward => LoopMode::PingPong,
+                        LoopMode::PingPong => LoopMode::OneShot,
+                    }
+                }
+                5 => state.sampler_reverse = !state.sampler_reverse,
+                _ => {}
+            }
+            draw_page(state, current_el);
+            true
+        }
+        Page::Dsp => {
+            if index == 0 {
+                if let Some(id) = state.loaded_sample {
+                    state.dsp_results = benchmark::sampler_benchmarks(timer, &state.samples, id);
+                    state.dsp_selected = 0;
+                }
+            } else if index == 1 {
+                state.dsp_selected = (state.dsp_selected + 1) % state.dsp_results.len();
+            } else if index == 2 {
+                state.dsp_selected = state
+                    .dsp_selected
+                    .checked_sub(1)
+                    .unwrap_or(state.dsp_results.len() - 1);
+            }
+            draw_page(state, current_el);
+            true
+        }
     }
+}
+
+fn trigger_sampler(state: &mut AppState<'_>) {
+    let Some(id) = state.loaded_sample else {
+        return;
+    };
+    let Some(sample) = state.samples.get(id) else {
+        return;
+    };
+    let parameters = VoiceParameters {
+        end_frame: sample.frame_count,
+        semitones: f32::from(state.sampler_pitch),
+        direction: if state.sampler_reverse {
+            Direction::Reverse
+        } else {
+            Direction::Forward
+        },
+        loop_mode: state.sampler_loop,
+        gain: 0.8,
+        ..VoiceParameters::default()
+    };
+    state.sampler_voice = state.sampler.trigger(&state.samples, id, parameters);
 }
 
 fn scan_samples(state: &mut AppState<'_>, sd: &SdHost, directory: Option<DirectoryEntry>) {
@@ -573,6 +673,7 @@ fn load_selected_sample(state: &mut AppState<'_>, sd: &SdHost, timer: &Timer) {
             .frame(frame)
             .map_or(0, |f| (f.left.abs().max(f.right.abs()) * 36.0) as u8);
     }
+    state.sampler.stop_all();
     state.samples.reset();
     match state
         .samples
@@ -662,6 +763,8 @@ fn draw_page(state: &AppState<'_>, current_el: u64) {
         Page::Audio => draw_audio_page(state),
         Page::Storage => draw_storage_page(state),
         Page::Samples => draw_samples_page(state),
+        Page::Sampler => draw_sampler_page(state),
+        Page::Dsp => draw_dsp_page(state),
     }
 }
 
@@ -1010,6 +1113,150 @@ fn draw_samples_page(state: &AppState<'_>) {
     }
     surface.text(4, 182, "B1 LOAD B2 RELEASE B3/4 SELECT", Rgb565::WHITE);
     surface.text(4, 196, "B5 ENTER DIR B6 /SAMPLES", Rgb565::WHITE);
+}
+
+fn draw_sampler_page(state: &AppState<'_>) {
+    let mut surface = framebuffer_surface();
+    page_header(&mut surface, "SAMPLER (SILENT DSP)");
+    let mut text = TextBuffer::new();
+    if let Some(id) = state.loaded_sample {
+        if let Some(sample) = state.samples.get(id) {
+            write!(text, "SAMPLE {}", sample.name()).ok();
+            surface.text(4, 24, text.as_str(), Rgb565::WHITE);
+        }
+    } else {
+        surface.text(4, 24, "LOAD A SAMPLE FIRST", Rgb565::YELLOW);
+    }
+    text.clear();
+    write!(
+        text,
+        "PITCH {}ST DIR {} MODE {:?}",
+        state.sampler_pitch,
+        if state.sampler_reverse { "REV" } else { "FWD" },
+        state.sampler_loop
+    )
+    .ok();
+    surface.text(4, 40, text.as_str(), Rgb565::WHITE);
+    let statistics = state.sampler.statistics();
+    text.clear();
+    write!(
+        text,
+        "VOICES {} PEAK L{} R{} CLIP {}",
+        statistics.active_voices,
+        (statistics.peak_left * 100.0) as u32,
+        (statistics.peak_right * 100.0) as u32,
+        statistics.clipping_samples
+    )
+    .ok();
+    surface.text(4, 56, text.as_str(), Rgb565::WHITE);
+    text.clear();
+    let utilization = state.sampler_block_us.saturating_mul(1000) / 2667;
+    write!(
+        text,
+        "BLOCK {}US MAX {}US UTIL {}.{}%",
+        state.sampler_block_us,
+        state.sampler_max_us,
+        utilization / 10,
+        utilization % 10
+    )
+    .ok();
+    surface.text(4, 72, text.as_str(), Rgb565::GREEN);
+    text.clear();
+    let (position, envelope, direction) = state
+        .sampler_voice
+        .and_then(|index| state.sampler.voice(index))
+        .map_or((0, "IDLE", Direction::Forward), |voice| {
+            (
+                voice.position().max(0.0) as u32,
+                match voice.envelope_stage() {
+                    pie8_core::sampler::EnvelopeStage::Idle => "IDLE",
+                    pie8_core::sampler::EnvelopeStage::Attack => "ATTACK",
+                    pie8_core::sampler::EnvelopeStage::Decay => "DECAY",
+                    pie8_core::sampler::EnvelopeStage::Sustain => "SUSTAIN",
+                    pie8_core::sampler::EnvelopeStage::Release => "RELEASE",
+                },
+                voice.direction(),
+            )
+        });
+    write!(
+        text,
+        "POS {} ENV {} {:?} MISS {}",
+        position, envelope, direction, state.sampler_deadline_misses
+    )
+    .ok();
+    surface.text(4, 88, text.as_str(), Rgb565::WHITE);
+    surface.horizontal_line(8, 150, 256, Rgb565::new(48, 48, 48));
+    for (x, height) in state.waveform.iter().copied().enumerate() {
+        surface.vertical_line(
+            8 + x as i32 * 4,
+            150 - i32::from(height),
+            u32::from(height) * 2 + 1,
+            Rgb565::CYAN,
+        );
+    }
+    if let Some(id) = state.loaded_sample {
+        if let Some(sample) = state.samples.get(id) {
+            let marker = 8
+                + (u64::from(position.min(sample.frame_count)) * 255
+                    / u64::from(sample.frame_count.max(1))) as i32;
+            surface.vertical_line(marker, 108, 84, Rgb565::YELLOW);
+        }
+    }
+    surface.text(4, 198, "B1 TRIG B2 REL B3/4 PITCH", Rgb565::WHITE);
+    surface.text(4, 212, "B5 LOOP B6 DIRECTION", Rgb565::WHITE);
+}
+
+fn draw_dsp_page(state: &AppState<'_>) {
+    let mut surface = framebuffer_surface();
+    page_header(&mut surface, "SAMPLER DSP BENCHMARK");
+    surface.text(4, 23, "DSP ONLY: DISPLAY/INPUT EXCLUDED", Rgb565::YELLOW);
+    let result = state.dsp_results[state.dsp_selected];
+    let mut text = TextBuffer::new();
+    if result.voices == 0 {
+        surface.text(4, 44, "LOAD SAMPLE THEN B1 RUN", Rgb565::WHITE);
+    } else {
+        write!(
+            text,
+            "RESULT {}/15 VOICES {} BLOCK {}",
+            state.dsp_selected + 1,
+            result.voices,
+            result.block_frames
+        )
+        .ok();
+        surface.text(4, 44, text.as_str(), Rgb565::WHITE);
+        text.clear();
+        write!(
+            text,
+            "AVG {}US MAX {}US",
+            result.average_us, result.maximum_us
+        )
+        .ok();
+        surface.text(4, 62, text.as_str(), Rgb565::WHITE);
+        text.clear();
+        write!(
+            text,
+            "DEADLINE {}US UTIL {}.{}%",
+            result.deadline_us,
+            result.utilization_tenths / 10,
+            result.utilization_tenths % 10
+        )
+        .ok();
+        surface.text(4, 80, text.as_str(), Rgb565::GREEN);
+        text.clear();
+        write!(
+            text,
+            "MISSES {} VOICE MEM {}B",
+            result.misses, result.voice_memory_bytes
+        )
+        .ok();
+        surface.text(4, 98, text.as_str(), Rgb565::WHITE);
+        text.clear();
+        write!(text, "CHECKSUM {}", result.checksum as i32).ok();
+        surface.text(4, 116, text.as_str(), Rgb565::WHITE);
+        surface.text(4, 140, "128 BLOCKS PER CONFIG (SUSTAINED)", Rgb565::CYAN);
+    }
+    surface.text(4, 190, "B1 RUN ALL B2 NEXT B3 PREV", Rgb565::WHITE);
+    surface.text(4, 204, "NO AUDIO BACKEND GUARANTEE", Rgb565::YELLOW);
 }
 
 fn button_rect(index: usize) -> Rect {

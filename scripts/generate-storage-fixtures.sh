@@ -7,14 +7,14 @@ python3 - "$output/samples/drums/mono-pcm16.wav" \
   "$output/samples/drums/stereo-pcm16.wav" \
   "$output/samples/Long Stereo PCM24 Sample Name.wav" \
   "$output/samples/long/longer-sample.wav" \
-  "$output/samples/unsupported-44100hz.wav" <<'PY'
+  "$output/samples/unsupported-pcm8.wav" <<'PY'
 import math, sys, wave
 specs = (
     (sys.argv[1], 80, 2, 1, 48000, 4800),
     (sys.argv[2], 160, 2, 2, 48000, 4800),
     (sys.argv[3], 440, 3, 2, 48000, 4800),
     (sys.argv[4], 220, 2, 2, 48000, 48000 * 4),
-    (sys.argv[5], 330, 2, 2, 44100, 4410),
+    (sys.argv[5], 330, 1, 2, 48000, 4800),
 )
 for path, frequency, width, channels, rate, count in specs:
     with wave.open(path, "wb") as wav:
@@ -31,6 +31,6 @@ printf 'label: dos\nstart=2048, size=131072, type=c\n' | sfdisk "$image" >/dev/n
 mkfs.fat -F 32 -n PIE8TEST --offset 2048 "$image" 65536 >/dev/null
 mmd -i "$image@@1048576" ::samples ::samples/drums ::samples/long
 mcopy -i "$image@@1048576" "$output/samples/drums/mono-pcm16.wav" "$output/samples/drums/stereo-pcm16.wav" ::samples/drums/
-mcopy -i "$image@@1048576" "$output/samples/Long Stereo PCM24 Sample Name.wav" "$output/samples/unsupported-44100hz.wav" ::samples/
+mcopy -i "$image@@1048576" "$output/samples/Long Stereo PCM24 Sample Name.wav" "$output/samples/unsupported-pcm8.wav" ::samples/
 mcopy -i "$image@@1048576" "$output/samples/long/longer-sample.wav" ::samples/long/
 echo "generated $image and WAV fixtures under $output/samples"

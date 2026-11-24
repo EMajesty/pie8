@@ -46,7 +46,7 @@ LFN decoding, timestamps beyond raw directory metadata, writes, and hot-plug.
 ## WAV and sample representation
 
 The RIFF parser accepts PCM format 1, mono/stereo, 16/24-bit little-endian, and
-exactly 48 kHz. It walks chunks in any order, skips unknown chunks and odd-byte
+8–192 kHz source rates. It walks chunks in any order, skips unknown chunks and odd-byte
 padding, and rejects truncation, size overflow, missing chunks, and unsupported
 rates instead of playing at the wrong pitch. PCM converts to stereo `f32`
 frames in `[-1, 1)` when read.
@@ -55,6 +55,25 @@ Samples retain packed native PCM in RAM: PCM16 stereo uses 4 bytes/frame and
 PCM24 stereo 6, versus 8 for float stereo. Metadata records ID, bounded filename,
 channels, rate, bit depth, frames, duration, arena bytes, and offset. Reset
 unloads the entire initial library; individual compaction is intentionally absent.
+
+## Sampler ownership and processing
+
+The sample arena exclusively owns packed PCM. A voice stores only a sample ID
+and library generation, never a pointer or slice. Arena reset increments the
+generation; the next bounded processing pass deactivates stale voices. Firmware
+also stops voices before an intentional reset.
+
+`Sampler<N>` has fixed-capacity inline voice storage and performs no allocation,
+filesystem access, or hardware calls. Each voice owns fractional position,
+source-rate/pitch increment, range, direction, loop mode, gain/pan and ADSR
+state. Boundary wrapping is constant-time even for extreme increments. Mixing
+uses float32 headroom and clips only the final stereo result while counting
+clipped samples. Non-finite parameters and mix values are sanitized.
+
+The host renderer and firmware use the exact same implementation. Linear
+interpolation has no anti-alias filter, so downward conversion and large pitch
+changes are preview quality. Instrument policy and eventual I²S output remain
+separate layers.
 
 ## SD controller strategy
 

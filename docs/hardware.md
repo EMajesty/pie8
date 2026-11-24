@@ -76,8 +76,8 @@ design or pin allocation is finalized. Pi 3 PWM audio is explicitly deprioritize
 5. Navigate to Samples. B3/B4 select entries, B5 enters a directory and B6
    returns to `/samples`. Select and B1-load each supported fixture. Confirm
    bit depth, channels, 48000 Hz, duration, bytes, load time and waveform.
-   B2 must release the loaded arena. The 44.1 kHz fixture must report
-   `UNSUPPORTED WAV`, never load or play at the wrong rate.
+   B2 must release the loaded arena. The PCM8 fixture must report
+   `UNSUPPORTED WAV`; 44.1 kHz PCM16/24 is now supported.
 6. Load the longer fixture, release it, and load another file. Repeat directory
    enumeration after an SD retry. Confirm button/display behavior remains
    responsive. Firmware performs only reads; do not remove power while the host
@@ -91,3 +91,22 @@ design or pin allocation is finalized. Pi 3 PWM audio is explicitly deprioritize
 If boot fails after the update, restore the prior kernel and capture any UART
 ESR/ELR/FAR line. If Storage fails, report the exact on-screen raw values before
 changing configuration. No destructive SD diagnostic exists.
+
+## Milestone 005 sampler and DSP test
+
+1. Update `kernel8.img` only and boot. Reconfirm Storage and Samples; no boot
+   configuration changed.
+2. Load a WAV, then open Sampler. B1 triggers, B2 releases, B3/B4 change pitch,
+   B5 cycles one-shot/forward/ping-pong, and B6 reverses direction.
+3. Confirm position, direction, envelope, voices, peaks, block time and waveform
+   marker change. Switch pages during silent processing and confirm UI remains
+   responsive. There is intentionally no physical audio output.
+4. Release the sample arena during or after playback. Active voices must become
+   zero and stale playback must not continue.
+5. Exercise mono PCM16, stereo PCM16, stereo PCM24 and 44.1 kHz PCM files.
+6. On DSP press B1. It runs 15 sustained configurations: 8/16/32/64/128 voices
+   crossed with 64/128/256-frame blocks, 128 blocks each. B2/B3 browse results.
+   Record average/max time, deadline, utilization, misses and voice memory.
+7. Report build ID, sample format/rate, all results, deadline misses and UI
+   responsiveness. DSP-only timing excludes display/input and cannot guarantee
+   future physical-output glitch freedom.

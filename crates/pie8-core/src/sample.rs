@@ -33,6 +33,7 @@ pub struct SampleLibrary<'a, const N: usize> {
     arena: Arena<'a>,
     samples: [Option<SampleMetadata>; N],
     count: usize,
+    generation: u32,
 }
 impl<'a, const N: usize> SampleLibrary<'a, N> {
     pub fn new(memory: &'a mut [u8]) -> Self {
@@ -40,6 +41,7 @@ impl<'a, const N: usize> SampleLibrary<'a, N> {
             arena: Arena::new(memory),
             samples: [None; N],
             count: 0,
+            generation: 1,
         }
     }
     pub fn count(&self) -> usize {
@@ -50,6 +52,9 @@ impl<'a, const N: usize> SampleLibrary<'a, N> {
     }
     pub fn capacity_bytes(&self) -> usize {
         self.arena.capacity()
+    }
+    pub const fn generation(&self) -> u32 {
+        self.generation
     }
     pub fn get(&self, id: SampleId) -> Option<&SampleMetadata> {
         self.samples.get(id as usize)?.as_ref()
@@ -94,7 +99,25 @@ impl<'a, const N: usize> SampleLibrary<'a, N> {
     pub fn reset(&mut self) {
         self.samples.fill(None);
         self.count = 0;
-        self.arena.reset()
+        self.arena.reset();
+        self.generation = self.generation.wrapping_add(1).max(1);
+    }
+}
+
+impl<const N: usize> crate::sampler::SampleSource for SampleLibrary<'_, N> {
+    fn generation(&self) -> u32 {
+        self.generation
+    }
+
+    fn sample(&self, id: SampleId) -> Option<crate::sampler::SampleView<'_>> {
+        let metadata = *self.get(id)?;
+        Some(crate::sampler::SampleView {
+            channels: metadata.channels,
+            sample_rate: metadata.sample_rate,
+            bits_per_sample: metadata.bits_per_sample,
+            frame_count: metadata.frame_count,
+            pcm: self.pcm(id)?,
+        })
     }
 }
 
@@ -123,9 +146,11 @@ mod tests {
         let id = l.load("kick.wav", &wav()).unwrap();
         assert_eq!(l.get(id).unwrap().frame_count, 1);
         assert_eq!(l.pcm(id).unwrap().len(), 2);
+        let generation = l.generation();
         l.reset();
         assert_eq!(l.count(), 0);
-        assert_eq!(l.used_bytes(), 0)
+        assert_eq!(l.used_bytes(), 0);
+        assert_ne!(l.generation(), generation)
     }
     #[test]
     fn reports_exhaustion() {

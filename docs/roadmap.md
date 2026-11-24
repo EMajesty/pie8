@@ -25,10 +25,20 @@ Exit work: repeat on Zero 2 W and additional cards, exercise malformed/error
 paths, quantify long-duration reliability and polling latency, and consider
 native CMD18 now that CMD17 is proven. No write support is planned.
 
+## Milestone 005 — sampler and DSP measurement
+
+- Allocation-free PCM16/24 mono/stereo voices with fractional interpolation,
+  source-rate correction, pitch, reverse, ranges and loop modes.
+- ADSR/de-click envelope, deterministic fixed-capacity stealing, panning,
+  mixing, peak/clipping statistics and generation-safe arena reset.
+- Shared host stereo WAV renderer and silent on-device sampler controls.
+- DSP matrix for 8/16/32/64/128 voices and 64/128/256-frame blocks.
+
+New target functionality awaits physical testing.
+
 ## Next audio milestone
 
-Continue host-side engine/render tests and on-device DSP benchmarks. Do not
-implement Pi 3 PWM. After selecting I²S DAC/codec hardware and resolving the
+Do not implement Pi 3 PWM. After selecting I²S DAC/codec hardware and resolving the
 prototype GPIO18–21 conflict, build a separate continuous DMA backend with
 verified bus addressing/coherency, underrun accounting, and clean start/stop.
 

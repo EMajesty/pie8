@@ -1,8 +1,11 @@
 use core::{cell::UnsafeCell, hint::black_box};
 
 use pie8_core::{
+    audio::StereoFrame,
     benchmark::Rate,
     graphics::{Rect, Rgb565, Surface},
+    sample::{SampleId, SampleLibrary},
+    sampler::{EnvelopeParameters, LoopMode, Sampler, Voice, VoiceParameters},
 };
 use pie8_rpi::timer::Timer;
 
@@ -20,6 +23,82 @@ pub struct CpuBenchmarks {
     pub integer_ops_s: u64,
     pub float_ops_s: u64,
     pub copy_bytes_s: u64,
+}
+
+#[derive(Clone, Copy, Default)]
+pub struct DspResult {
+    pub voices: u16,
+    pub block_frames: u16,
+    pub average_us: u64,
+    pub maximum_us: u64,
+    pub deadline_us: u64,
+    pub misses: u32,
+    pub utilization_tenths: u32,
+    pub voice_memory_bytes: u32,
+    pub checksum: f32,
+}
+
+pub fn sampler_benchmarks(
+    timer: &Timer,
+    samples: &SampleLibrary<'_, 8>,
+    sample_id: SampleId,
+) -> [DspResult; 15] {
+    let mut results = [DspResult::default(); 15];
+    let mut output = [StereoFrame::default(); 256];
+    let mut result_index = 0;
+    for voices in [8usize, 16, 32, 64, 128] {
+        for block_frames in [64usize, 128, 256] {
+            let mut sampler = Sampler::<128>::new();
+            let parameters = VoiceParameters {
+                end_frame: samples.get(sample_id).map_or(0, |s| s.frame_count),
+                semitones: 3.25,
+                gain: 0.25,
+                pan: 0.2,
+                loop_mode: LoopMode::Forward,
+                envelope: EnvelopeParameters {
+                    attack_ms: 1.0,
+                    decay_ms: 10.0,
+                    sustain: 0.8,
+                    release_ms: 10.0,
+                    declick_ms: 1.0,
+                },
+                ..VoiceParameters::default()
+            };
+            for _ in 0..voices {
+                let _ = sampler.trigger(samples, sample_id, parameters);
+            }
+            let iterations = 128u64;
+            let deadline_us = block_frames as u64 * 1_000_000 / 48_000;
+            let mut total = 0u64;
+            let mut maximum = 0u64;
+            let mut misses = 0u32;
+            let mut checksum = 0.0f32;
+            for _ in 0..iterations {
+                let start = timer.micros();
+                sampler.process(samples, &mut output[..block_frames]);
+                let elapsed = timer.micros().wrapping_sub(start);
+                total += elapsed;
+                maximum = maximum.max(elapsed);
+                misses += u32::from(elapsed > deadline_us);
+                checksum += output[block_frames - 1].left + output[block_frames / 2].right;
+                black_box(checksum);
+            }
+            let average = total / iterations;
+            results[result_index] = DspResult {
+                voices: voices as u16,
+                block_frames: block_frames as u16,
+                average_us: average,
+                maximum_us: maximum,
+                deadline_us,
+                misses,
+                utilization_tenths: (average.saturating_mul(1_000) / deadline_us) as u32,
+                voice_memory_bytes: (voices * core::mem::size_of::<Voice>()) as u32,
+                checksum,
+            };
+            result_index += 1;
+        }
+    }
+    results
 }
 
 pub fn run_cpu(timer: &Timer) -> CpuBenchmarks {

@@ -12,6 +12,7 @@ pub mod fat32;
 pub mod graphics;
 pub mod partition;
 pub mod sample;
+pub mod sampler;
 pub mod sd;
 pub mod wav;
 

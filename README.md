@@ -2,8 +2,9 @@
 
 PIE8 is a portable bare-metal Rust music tracker targeting Raspberry Pi 3 for
 development and Raspberry Pi Zero 2 W on a future custom carrier. Milestone
-004B adds read-only physical boot-card access through BCM2835 SDHOST, connected
-to the existing MBR/FAT32/WAV stack. There is no Linux runtime on the target.
+005 adds a portable polyphonic sampler, host WAV rendering, and on-device DSP
+benchmarks above the verified read-only SD/FAT32 stack. There is no Linux
+runtime on the target.
 
 ## Verified baseline
 
@@ -19,7 +20,8 @@ signal-integrity qualification.
 
 Prototype defaults are inversion OFF, RGB order, and 31.25 MHz SPI. Colour-page
 B3 cycles rates and B4 restores the conservative 7.8125 MHz fallback. B7/B8
-navigate all Buttons, Colours, Performance, Audio, Storage, and Samples pages.
+navigate Buttons, Colours, Performance, Audio, Storage, Samples, Sampler, and
+DSP pages.
 
 ## Build and boot-card update
 
@@ -53,7 +55,7 @@ sync
 ```
 
 This adds mono PCM16, stereo PCM16, stereo PCM24, a four-second sample, nested
-directories, a long filename, and an intentionally unsupported 44.1 kHz WAV.
+directories, a long filename, and an intentionally unsupported PCM8 WAV.
 It does not format the card or remove unrelated contents.
 
 ## Reproducible host storage tests
@@ -74,13 +76,41 @@ output directory; it never accepts a block device.
 Portable code supports bounded MBR discovery, FAT32 validation, root/nested
 directories, short and long filenames, fragmented cluster chains, sequential
 reads, and a host disk-image block device. WAV supports mono/stereo PCM16/24 at
-exactly 48 kHz, unknown/padded/noncanonical chunks, and float conversion. Native
+8–192 kHz, including 44.1 and 48 kHz, unknown/padded/noncanonical chunks, and
+float conversion. Native
 packed PCM is retained in the sample arena to use 25–50% less RAM than stereo
 float storage; DSP conversion happens when consumed.
 
 Only MBR partition types `0x0b`/`0x0c`, 512-byte sectors, FAT32, and ASCII LFN
 characters are supported. GPT, exFAT, FAT12/16, Unicode LFN conversion,
-resampling, writes, and hot-plug are unsupported.
+offline resampling, writes, and hot-plug are unsupported.
+
+## Host sampler rendering
+
+The host tool uses the same packed-PCM decoder, interpolating voices, ADSR and
+mixer as firmware and writes stereo PCM16 at 48 kHz:
+
+```sh
+cargo run -p pie8-sampler-render -- input.wav /tmp/note.wav --pitch 7 --cents -12 --gain 0.7
+cargo run -p pie8-sampler-render -- input.wav /tmp/reverse.wav --reverse --seconds 4
+cargo run -p pie8-sampler-render -- input.wav /tmp/loop.wav --loop pingpong --speed 0.5 --attack-ms 5 --release-ms 100
+cargo run -p pie8-sampler-render -- input.wav /tmp/poly.wav --voices 16 --sequence --seconds 8
+```
+
+With the generated mono fixture, this deterministic regression render:
+
+```sh
+cargo run -q -p pie8-sampler-render -- \
+  /tmp/pie8-fixtures/samples/drums/mono-pcm16.wav /tmp/pie8-render.wav \
+  --pitch 7 --loop pingpong --voices 8 --sequence --seconds 2
+sha256sum /tmp/pie8-render.wav
+```
+
+produces SHA-256 `19eba34d40140348f11c29fa06b2291b48d27704384d479e58551345544f4468`.
+
+Source rate contributes to the fractional playback increment, preserving pitch
+and duration without offline conversion. Linear interpolation is inexpensive
+but does not suppress aliasing when downsampling or making large pitch shifts.
 
 Physical access now uses the established Pi 3/Zero 2 W external-card route:
 BCM2835 SDHOST at `0x3f202000`, GPIO48--53 ALT0. The Arasan/GPIO34--39 Wi-Fi
