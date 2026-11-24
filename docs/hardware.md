@@ -13,8 +13,19 @@ Physical Raspberry Pi 3 testing through milestone 003 confirms:
 
 This does not qualify 31.25 MHz signal integrity, temperature/voltage margins,
 or long-duration stability. Quantitative benchmarks and UART remain unrecorded.
-Mailbox memory discovery, SDHOST card access, FAT/WAV loading, and Zero 2 W
-remain unverified on hardware.
+Milestone 004B physical Raspberry Pi 3 testing additionally confirms:
+
+- SDHOST reaches Ready with the external boot card on GPIO48--53 ALT0.
+- The 29.7 GiB SDHC card capacity is reported as 30,436 MiB.
+- MBR FAT32 partition type `0x0c` is found at LBA 2048 and mounts successfully.
+- The diagnostic sequential CMD17 test measured **1,897 KiB/s** with the
+  four-bit bus, 25 MHz requested clock, and full-divider mode enabled.
+- Final `HSTS` was `0x00000000`; directory browsing, WAV loading, sample-arena
+  storage and waveform display worked on-device.
+
+UART and Zero 2 W remain unverified. This validates one Pi 3/card combination,
+not hot-plug, broad card compatibility, long-duration reliability, native
+CMD18, or signal-integrity margins.
 
 ## Prototype wiring
 

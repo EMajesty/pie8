@@ -7,12 +7,15 @@ to the existing MBR/FAT32/WAV stack. There is no Linux runtime on the target.
 
 ## Verified baseline
 
-Milestones 002 and 003 have booted successfully on a physical Pi 3. Display
+Milestones 002 through 004B have booted successfully on a physical Pi 3. Display
 initialization/text, all eight buttons, indicators/counting, diagnostic pages,
 inversion OFF with RGB order, and every selectable SPI rate worked. This is a
 functional observation, not signal-integrity or long-duration qualification at
-31.25 MHz. Quantitative benchmark values and UART remain untested. Milestone 004
-memory discovery and all 004B SD behavior are not physically verified.
+31.25 MHz. BCM2835 SDHOST initialized the physical boot card, found its FAT32
+partition at LBA 2048, read sequentially at 1,897 KiB/s, browsed `/samples`,
+loaded a WAV into the sample arena, and rendered its waveform. UART and Zero 2 W
+remain untested; the SD result is one-card bring-up rather than broad media or
+signal-integrity qualification.
 
 Prototype defaults are inversion OFF, RGB order, and 31.25 MHz SPI. Colour-page
 B3 cycles rates and B4 restores the conservative 7.8125 MHz fallback. B7/B8

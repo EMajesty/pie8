@@ -103,8 +103,9 @@ initialization stage, capacity, last command/response, SDHOST status, FAT32
 mount result and measured sequential read rate. Button 1 retries a complete
 reset and initialization without rebooting.
 
-The implementation has been build- and host-tested but has not yet been run
-against a physical controller. In particular, command-busy completion and the
-SDHOST FIFO transition need hardware confirmation. Keep a photo or exact copy
-of the displayed stage, command, response and `HSTS` value when reporting a
-failure.
+The implementation is physically confirmed on a Raspberry Pi 3 with a 29.7 GiB
+SDHC boot card. It reached Ready, reported 30,436 MiB, mounted the type `0x0c`
+FAT32 partition at LBA 2048, finished with `HSTS=0`, and measured 1,897 KiB/s
+using sequential CMD17 reads. Directory browsing, WAV loading and waveform
+display also worked. Zero 2 W, other card models, native CMD18 and long-duration
+reliability remain unverified.

@@ -18,11 +18,12 @@ Implemented host-testable foundation:
 - Reproducible partitioned FAT32/WAV fixtures and safe sample copy tooling.
 - Deterministic SDHOST external-card routing, polling initialization, card
   identity/capacity, read-only block access, FAT mount and on-screen retry/error
-  diagnostics (awaiting physical validation).
+  diagnostics. Physically confirmed on Pi 3 at 1,897 KiB/s with successful
+  FAT32 browsing, WAV loading and waveform display.
 
-Exit work: physical Pi 3 then Zero 2 W validation, tune any observed SDHOST
-state-machine differences, validate the sample browser/load controls, and
-consider native CMD18 after CMD17 is proven. No write support is planned.
+Exit work: repeat on Zero 2 W and additional cards, exercise malformed/error
+paths, quantify long-duration reliability and polling latency, and consider
+native CMD18 now that CMD17 is proven. No write support is planned.
 
 ## Next audio milestone
 
