@@ -79,7 +79,8 @@ The driver:
    actual 400 kHz identification clock from the fixed 250 MHz core clock;
 3. performs CMD0, CMD8, ACMD41, CMD2, CMD3, CMD9 and CMD7;
 4. validates the interface response, OCR ready/CCS bits, RCA and CSD capacity;
-5. selects four-bit width with ACMD6 and switches to 25 MHz;
+5. selects four-bit width with ACMD6, enables SDHOST's full-divider
+   (`SLOW_CARD`) mode, and switches to 25 MHz;
 6. issues read-only CMD17 transfers through the FIFO with generic-counter
    deadlines and controller error capture.
 

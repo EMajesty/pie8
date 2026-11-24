@@ -44,6 +44,7 @@ const HSTS_ERROR: u32 = 0x00f8;
 const HSTS_BUSY: u32 = 0x0400;
 const HCFG_BUSY_IRQ: u32 = 1 << 10;
 const HCFG_DATA_IRQ: u32 = 1 << 4;
+const HCFG_SLOW_CARD: u32 = 1 << 3;
 const HCFG_WIDE_EXT: u32 = 1 << 2;
 const HCFG_WIDE_INT: u32 = 1 << 1;
 const EDM_FIFO_COUNT_MASK: u32 = 0x1f0;
@@ -239,7 +240,7 @@ impl SdHost {
         self.command(state, 6, 2, Response::Short, false, false)?;
         write32(
             SDHCFG,
-            HCFG_BUSY_IRQ | HCFG_DATA_IRQ | HCFG_WIDE_EXT | HCFG_WIDE_INT,
+            HCFG_BUSY_IRQ | HCFG_DATA_IRQ | HCFG_SLOW_CARD | HCFG_WIDE_EXT | HCFG_WIDE_INT,
         );
         if state.addressing == Addressing::Byte {
             self.command(state, 16, BLOCK_SIZE as u32, Response::Short, false, false)?;

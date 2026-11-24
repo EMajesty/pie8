@@ -994,8 +994,10 @@ fn draw_samples_page(state: &AppState<'_>) {
             .ok();
             surface.text(4, 72, text.as_str(), Rgb565::WHITE);
         }
-    } else if let Some(error) = state.sample_error {
-        surface.text(4, 58, error, Rgb565::YELLOW);
+    } else if state.browser_count != 0 {
+        if let Some(error) = state.sample_error {
+            surface.text(4, 58, error, Rgb565::YELLOW);
+        }
     }
     surface.horizontal_line(8, 138, 304, Rgb565::new(48, 48, 48));
     for (x, height) in state.waveform.iter().copied().enumerate() {
