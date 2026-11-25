@@ -24,9 +24,19 @@
             extensions = [ "clippy" "llvm-tools" "rust-src" "rustfmt" ];
             targets = [ "aarch64-unknown-none" ];
           };
+          x11Runtime = with pkgs.xorg; [
+            libX11
+            libXcursor
+            libXext
+            libXfixes
+            libXi
+            libXrandr
+            libXrender
+            libxcb
+          ];
         in {
           default = pkgs.mkShell {
-            packages = with pkgs; [
+            packages = (with pkgs; [
               rust
               llvmPackages.bintools
               cargo-auditable
@@ -38,11 +48,8 @@
               mtools
               python3
               util-linux
-              xorg.libX11
-              xorg.libXcursor
-              xorg.libXi
-              xorg.libXrandr
-            ];
+            ]) ++ x11Runtime;
+            LD_LIBRARY_PATH = pkgs.lib.makeLibraryPath x11Runtime;
             RUST_BACKTRACE = "1";
           };
         });

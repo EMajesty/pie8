@@ -25,6 +25,12 @@ or firmware crates. Launch on NixOS:
 nix develop path:. --command cargo run -p pie8-sim
 ```
 
+The flake sets `LD_LIBRARY_PATH` with `pkgs.lib.makeLibraryPath` for X11,
+Xcursor, Xext, Xfixes, Xi, Xrandr, Xrender and XCB. This lets minifb/x11-dl load
+its versioned shared objects directly from the development shell; no `nix-ld`
+or system-wide NixOS configuration is required. A graphical window still
+requires a working X11 session and `DISPLAY`.
+
 Escape closes the window. Native RGB565 is converted only for presentation.
 Scaling is nearest-neighbor and integer; `--scale 1|2|4|8` selects a supported
 window scale (default 4).
