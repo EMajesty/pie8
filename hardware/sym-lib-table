@@ -1,0 +1,8 @@
+(sym_lib_table
+  (version 7)
+  (lib (name "emission-engine")(type "KiCad")(uri "${KIPRJMOD}/shared/majestic-kicad/symbols/emission-engine.kicad_sym")(options "")(descr ""))
+  (lib (name "majestic")(type "KiCad")(uri "${KIPRJMOD}/shared/majestic-kicad/symbols/majestic.kicad_sym")(options "")(descr ""))
+  (lib (name "midilord")(type "KiCad")(uri "${KIPRJMOD}/shared/majestic-kicad/symbols/midilord.kicad_sym")(options "")(descr ""))
+  (lib (name "noot")(type "KiCad")(uri "${KIPRJMOD}/shared/majestic-kicad/symbols/noot.kicad_sym")(options "")(descr ""))
+  (lib (name "platnam")(type "KiCad")(uri "${KIPRJMOD}/shared/majestic-kicad/symbols/platnam.kicad_sym")(options "")(descr ""))
+)
