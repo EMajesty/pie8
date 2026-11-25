@@ -1,5 +1,10 @@
 # Screen specifications and mockups
 
+UI-002 implements Song, Chain, Phrase and Sampler Instrument using the portable
+renderer. Native regression captures are in [`screenshots/`](screenshots/).
+Other map nodes currently render an explicit `UI-002 PLACEHOLDER` rather than
+suggesting functionality that is not implemented.
+
 Mockups are editable 320×240 SVG sources generated from screen data and an
 original 5×7 pixel font in [`mockups/render.py`](mockups/render.py). Matching
 lossless PNG files are the rendered previews. Regenerate both with:

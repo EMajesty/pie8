@@ -38,6 +38,10 @@
               mtools
               python3
               util-linux
+              xorg.libX11
+              xorg.libXcursor
+              xorg.libXi
+              xorg.libXrandr
             ];
             RUST_BACKTRACE = "1";
           };

@@ -14,18 +14,23 @@ timestamped and debounced by the existing input layer. UI input receives:
 - `Repeat(button, time)`, after 350 ms, then every 70 ms, accelerating to 35 ms
   after 1.5 s. Repeat applies only to directions and only where the focused
   action declares it safe.
-- `Chord(button_set, time)`, recognized when presses fall within a 50 ms window.
+- no timing window is applied to modifiers: a modifier may be held indefinitely
+  before its action button. A 50 ms window is reserved for future unordered
+  non-modifier chords and is not used by UI-002.
 
-Pressing modifiers does not itself alter data. A chord action fires once on the
-last required press; its component presses are consumed. Release order does not
-change the result. Directions held before EDIT perform navigation, not editing;
-EDIT must already be down when a direction is pressed. This precedence prevents
-an intended cursor move from changing a value.
+Pressing modifiers does not itself alter data. Held-modifier order is meaningful
+where M8 gives the same buttons two roles. `SHIFT` then `OPTION` tentatively
+starts selection; releasing OPTION commits selection mode. `OPTION` then
+`SHIFT` starts momentary mute. Pressing EDIT while tentative selection remains
+held upgrades that gesture to shallow clone, so selection is not committed.
+Component presses are consumed. Directions held before EDIT perform navigation,
+not editing; EDIT must already be down when a direction is pressed.
 
-Precedence, highest first: `SHIFT+OPTION+PLAY`, `SHIFT+modifier+action`,
-`EDIT+OPTION`, `modifier+PLAY`, `modifier+direction`, plain buttons. A longer
-valid chord suppresses its shorter subset. Opposite directions cancel movement;
-perpendicular directions are processed in timestamp order. PLAY never repeats.
+Precedence on the final press, highest first: SHIFT+OPTION+PLAY clear mute/solo;
+SHIFT+OPTION+EDIT clone; EDIT+OPTION clear/cut; SHIFT+EDIT paste; modifier+PLAY;
+EDIT+direction; SHIFT+direction; plain action. A longer valid chord suppresses
+its shorter subset. Opposite directions cancel movement; perpendicular presses
+are processed in timestamp order. PLAY never repeats.
 
 ## Global controls
 
@@ -37,7 +42,7 @@ perpendicular directions are processed in timestamp order. PLAY never repeats.
 | EDIT+LEFT/RIGHT | Fine decrement/increment; repeat allowed |
 | EDIT+UP/DOWN | Coarse increment/decrement; repeat allowed |
 | EDIT+OPTION | Clear a cell; on parameters restore default |
-| SHIFT+OPTION | Enter/extend rectangular selection |
+| SHIFT then OPTION, release OPTION | Enter/extend rectangular selection |
 | OPTION in selection | Copy selection and leave selection mode |
 | EDIT+OPTION in selection | Cut selection and leave selection mode |
 | SHIFT+EDIT | Paste at cursor; preview footprint before committing if it clips |
@@ -45,7 +50,7 @@ perpendicular directions are processed in timestamp order. PLAY never repeats.
 | PLAY | Contextual play/stop or audition |
 | SHIFT+PLAY | Start/stop all tracks from preserved Song context |
 | OPTION+PLAY | Solo focused track while held; release restores previous mask |
-| OPTION+SHIFT | Mute focused track while held; release restores previous mask |
+| OPTION then SHIFT | Mute focused track while held; release restores previous mask |
 | OPTION+SHIFT+PLAY | Clear latched mute/solo state |
 
 These intentionally track M8's global shortcuts (M8 manual pp. 7 and 68–69).
@@ -73,19 +78,16 @@ cells reference instruments; instruments may reference samples, tables and
 grooves. Editing a referenced object edits all its uses. A `*` after an object ID
 means it has more than one owner, following M8's shared-phrase warning.
 
-On a Chain/Phrase/Instrument/Table reference, `SHIFT+OPTION`, then `EDIT`
-performs a shallow clone into the lowest free ID and rewrites only the focused
-reference. On a chain, double-tapping EDIT within 250 ms performs a deep clone
-of the chain and every phrase it references. The status bar must say `CLONE
-CHAIN ONLY?` or `DEEP CLONE CHAIN+PHRASES?`; a second EDIT confirms and OPTION
-cancels. This inherits M8's clone distinction while adding confirmation.
+On a Chain/Phrase/Instrument/Table reference, hold `SHIFT`, then `OPTION`, then
+press `EDIT` before releasing either modifier. This performs a shallow clone into
+the lowest free ID and rewrites only the focused reference. Selection remains
+tentative until OPTION release, so this exact M8 clone gesture is unambiguous.
+Deep clone is deferred in UI-002.
 
 The clipboard stores typed grid data plus source schema, never raw pointers.
-Paste validates dimensions and referenced IDs. Project edits enter a bounded
-undo journal; `SHIFT+LEFT+OPTION` undoes and `SHIFT+RIGHT+OPTION` redoes. These
-three-button PIE8-only chords fire on OPTION and never navigate. Saving clears
-redo, not undo. Loading a project clears both. Transport, audition, cursor,
-screen navigation and live cue state are not journaled.
+Paste validates dimensions and referenced IDs. Undo and redo are deferred: no
+three-button directional chord is assigned, so SHIFT+direction always navigates
+immediately and cannot fire prematurely while building another chord.
 
 ## Notes, audition and playback edits
 
@@ -108,7 +110,9 @@ released or explicitly stopped.
   cue the focused track at its quantization boundary.
 - Chain/Phrase/Table/Groove: PLAY toggles the focused structure; SHIFT+PLAY
   returns to global song playback at the stored parent position.
-- Instrument/Sample browser: EDIT enters; PLAY auditions; OPTION returns.
+- EDIT exclusively inserts or edits values. Referenced objects are entered with
+  spatial SHIFT+RIGHT; OPTION returns to the recorded parent context.
+- Instrument/Sample browser: PLAY auditions; OPTION returns.
 - Sample editor: EDIT+direction changes the selected marker/parameter; PLAY
   auditions selection. Destructive PCM operations are outside UI-001 and must
   require a named action plus confirmation.

@@ -15,8 +15,8 @@ always remain cursor movement.
              │          │          │               │
           [MIXER]    [GROOVE]    [TABLE]──R──[EFFECTS]
              │                                     │
-             D                                     D
-             │                                     │
+             D                                     │
+             │                                     D
         [DIAGNOSTICS]                    [SAMPLE BROWSER]──R──[SAMPLE EDITOR]
 ```
 
@@ -38,17 +38,19 @@ enabled.
 | Table | Phrase | — | — | Effects |
 | Groove | Chain | — | — | — |
 | Mixer | Song | Diagnostics | — | — |
-| Effects | — | Sample browser | Table | — |
+| Effects | — | — | Table | — |
 | Project | — | Chain | — | Settings |
 | Settings | — | — | Project | — |
-| Sample browser | Effects | — | — | Sample editor |
+| Sample browser | Instrument | — | — | Sample editor |
 | Sample editor | — | — | Sample browser | — |
 | Diagnostics | Mixer | — | — | — |
 
-`EDIT` may also enter the object under the cursor: Song chain → Chain, Chain
-phrase → Phrase, Phrase instrument → Instrument, Instrument sample → Sample
-browser, browser file → Sample editor. OPTION returns through that exact entry
-edge rather than consulting the spatial map.
+SHIFT+RIGHT enters the object under the cursor while traversing Song chain →
+Chain, Chain phrase → Phrase, Phrase instrument → Instrument, and Sample browser
+→ Sample editor. EDIT is reserved for value insertion/editing. Sample Browser's
+single spatial parent is Instrument; Effects reaches it through Instrument.
+OPTION returns through the recorded caller even when that differs from the
+spatial parent.
 
 ## Context preservation
 

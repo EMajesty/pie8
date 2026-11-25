@@ -3,14 +3,16 @@ resolver = "2"
 members = [
     "crates/pie8-core",
     "crates/pie8-rpi",
+    "crates/pie8-ui",
     "firmware",
     "tools/image-inspect",
     "tools/storage-inspect",
     "tools/sampler-render",
+    "tools/pie8-sim",
 ]
 
 [workspace.package]
-version = "0.5.0"
+version = "0.6.0"
 edition = "2024"
 license = "MIT"
 repository = "https://github.com/EMajesty/pie8"

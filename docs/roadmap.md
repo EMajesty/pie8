@@ -41,13 +41,24 @@ New target functionality awaits physical testing.
 The LSDJ 9.2.6 and M8 6.5.2 manuals are studied in `docs/ui/`. The proposed
 interaction model uses the M8-labelled eight controls, a stable spatial screen
 map, shared-object clone safeguards, semantic palette roles and native 320×240
-mockups. A future desktop simulator will share its no_std input reducer and
-RGB565 renderer with firmware. UI-001 changes no runtime code.
+mockups. UI-002 now provides the shared no_std input reducer and RGB565 renderer.
+UI-001 itself changed no runtime code.
 
-Before production UI work: resolve the decisions listed in
-`docs/ui/interaction.md`, prototype the input timing on hardware, validate the
-map and mockups with LSDJ/M8 users, and choose a lightweight host presentation
-library.
+Before target UI activation: prototype input timing on hardware and validate the
+map and implemented screens with LSDJ/M8 users.
+
+## UI-002 — interactive tracker simulator
+
+Implemented a bounded editing model, no_std input/controller/RGB565 renderer,
+interactive minifb simulator, deterministic replay, and Song/Chain/Phrase/
+Sampler Instrument screens. The initial host configuration uses eight tracks
+and sixteen-step objects without making either a permanent engine limit.
+
+Deferred: undo/redo, deep clone, complete sequencer/transport, audio audition,
+file-backed sample selection, production implementations for other map screens,
+and firmware activation. The next UI iteration can implement
+`pie8_ui::adapter::Platform` over the working Pi timer/buttons/framebuffer while
+retaining diagnostics as a separately accessible mode.
 
 ## Next audio milestone
 

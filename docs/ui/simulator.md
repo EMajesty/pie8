@@ -1,10 +1,10 @@
-# Desktop simulator architecture
+# Desktop simulator architecture and operation
 
-The simulator is a future host executable around the same portable renderer and
-input reducer used by firmware. It is not a second UI implementation.
+UI-002 implements `tools/pie8-sim` around the exact portable model, controller,
+input reducer and renderer intended for firmware. It is not a second UI.
 
 ```text
-keyboard/replay ──> logical button edges ──> debounce/chord/repeat reducer
+keyboard/replay ──> logical button edges ──> held modifier/repeat reducer
                                                    │
 project model ──> screen controller ───────────────┤
                                                    v
@@ -12,22 +12,22 @@ project model ──> screen controller ─────────────�
                                                    │
                                 320×240 framebuffer + frame hash
                                                    │
-                          desktop texture, PNG capture, regression oracle
+                          minifb texture, PNG capture, regression oracle
 ```
 
-## Boundaries
+## Launch
 
-`pie8-core` should own logical buttons, timestamped events, chord resolution,
-screen state reducers, geometry, palette roles and a `Surface` trait accepting
-clipped RGB565 primitives. It must not know GPIO, SDL, files or wall-clock time.
-Firmware adapts existing button events and framebuffer. The host supplies a
-manual monotonic clock and an image/presentation adapter.
+minifb's X11 backend is the initial presentation layer. It has a small fixed-
+framebuffer API; its dependency and the host PNG encoder do not enter portable
+or firmware crates. Launch on NixOS:
 
-Proposed host presentation library: **minifb** first, because it has a small API
-for a fixed pixel buffer, keyboard state and integer-sized window. Evaluate
-**winit + pixels** only if robust controller/hidpi handling is needed; it brings a
-larger dependency graph. SDL2 is mature but introduces a native library. None is
-linked into firmware, and library selection is deferred until implementation.
+```sh
+nix develop path:. --command cargo run -p pie8-sim
+```
+
+Escape closes the window. Native RGB565 is converted only for presentation.
+Scaling is nearest-neighbor and integer; `--scale 1|2|4|8` selects a supported
+window scale (default 4).
 
 ## Keyboard map
 
@@ -39,48 +39,58 @@ linked into firmware, and library selection is deferred until implementation.
 | OPTION | Z | L |
 | PLAY | Space | Enter |
 
-The host reports key edges, not characters. OS key repeat is disabled; the
-portable reducer generates repeats from replay time. Multiple keys remain down
-simultaneously, so chords match hardware.
+The host reports key edges, not characters. OS repeat is disabled; `pie8-ui`
+generates repeat after 350 ms, every 70 ms, accelerating to 35 ms after 1.5 s.
+Multiple keys remain down simultaneously, preserving hardware chord semantics.
 
-## Deterministic replay and regression
+## Deterministic replay and screenshots
 
-Replay is a UTF-8 text fixture with integer microseconds and stable button names:
+Replay is UTF-8 text with monotonically increasing integer microseconds:
 
 ```text
 0 PRESS SHIFT
 10000 PRESS RIGHT
-30000 RELEASE RIGHT
-40000 RELEASE SHIFT
-100000 PRESS EDIT
-120000 RELEASE EDIT
+20000 RELEASE RIGHT
+30000 RELEASE SHIFT
 ```
 
-The runner starts from a versioned model fixture, advances a fake clock, renders
-after each event and at requested checkpoints, then records model digest,
-RGB565 framebuffer hash and optional PNG. No sleep, host locale, font service or
-filesystem enumeration may influence results. Tests cover chord precedence,
-repeat boundaries, navigation/context restoration, selection/clipboard, shared
-clone confirmation and exact screenshots.
+Run the committed editing session and save its final native frame:
 
-Screenshot capture writes the native 320×240 frame; presentation scaling is
-never captured. The desktop window allows integer 1×–6× scaling with black
-letterboxing and nearest-neighbor sampling. A debug overlay may show held keys
-outside the native framebuffer so it cannot affect golden images.
+```sh
+nix develop path:. --command cargo run -p pie8-sim -- \
+  --headless --replay tools/pie8-sim/replays/edit-session.txt \
+  --screenshot /tmp/pie8-replay.png
+```
 
-## Proposed crate split
+Generate captures of every implemented core screen:
 
-- `pie8-core`: reusable input semantics and tracker domain types.
-- future `pie8-ui`: no_std controller/renderer, mock project fixtures, no MMIO.
-- future `tools/pie8-sim`: desktop event/presentation and PNG/replay CLI.
-- `firmware`: GPIO/timer adapters and the existing RGB565 framebuffer surface.
+```sh
+nix develop path:. --command cargo run -p pie8-sim -- \
+  --headless --screenshot-dir docs/ui/screenshots
+```
 
-Do not create these crates until production UI implementation begins; UI-001 is
-specification only.
+`--screen song|chain|phrase|instrument` chooses the initial screen. Screenshot
+capture is always native 320×240 regardless of window scale. The committed
+replay's RGB565 FNV-1a hash is `9ab647b19df200e0` and is asserted by tests. The
+runner uses a fake clock; sleep, locale, fonts and directory enumeration cannot
+affect the result.
+
+## Crate and hardware boundaries
+
+- `pie8-core`: clipped RGB565 surface and existing portable facilities.
+- `pie8-ui`: no_std domain model, input state, controller, renderer and example.
+- `tools/pie8-sim`: minifb, keyboard edges, replay parser and PNG output.
+- `firmware`: unchanged in UI-002.
+
+`pie8_ui::adapter::Platform` is the minimal next-step firmware adapter. It
+provides monotonic microseconds, timestamped logical button events, a native
+`[u16; 320*240]` framebuffer and `present()`. The working generic timer, button
+state machine, static framebuffer and display region upload can implement it
+without placing MMIO in `pie8-ui` or replacing diagnostics.
 
 ## Open simulator decisions
 
-- minifb versus winit/pixels after NixOS and macOS input-latency prototypes;
 - committed PNG goldens versus lossless RGB565 dumps plus generated PNGs;
-- whether MIDI input belongs in the simulator or a separate host adapter;
-- accessibility alternatives for color and small bitmap text.
+- whether MIDI input belongs here or in a separate host adapter;
+- accessibility alternatives for color and small bitmap text;
+- input latency comparison with winit/pixels if minifb becomes limiting.

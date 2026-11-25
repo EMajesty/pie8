@@ -7,6 +7,7 @@ cd "$repo_root"
 cargo fmt --all --check
 cargo test --locked --workspace --exclude pie8-firmware --exclude pie8-rpi
 cargo clippy --locked --workspace --exclude pie8-firmware --exclude pie8-rpi --all-targets -- -D warnings
+cargo check --locked --package pie8-ui --target aarch64-unknown-none
 cargo clippy --locked --package pie8-rpi --package pie8-firmware \
   --target aarch64-unknown-none -- -D warnings
 ./scripts/build.sh

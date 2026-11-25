@@ -11,6 +11,19 @@ an M8-prioritized eight-button interaction model, spatial screen map, visual
 system, desktop simulator boundary, and original 320×240 mockups. It does not
 yet implement or replace the diagnostic UI.
 
+UI-002 implements that interaction core in the no_std `pie8-ui` crate and adds
+an interactive desktop simulator. Launch it on NixOS with:
+
+```sh
+nix develop path:. --command cargo run -p pie8-sim
+```
+
+The simulator opens a deterministic eight-track example project. Arrow keys,
+Left Shift, X, Z and Space map to directions, SHIFT, EDIT, OPTION and PLAY.
+W/S/A/D, J/K/L and Enter are alternate bindings. See
+[`docs/ui/simulator.md`](docs/ui/simulator.md) for replay and screenshot commands.
+Firmware continues to boot the established diagnostic application.
+
 ## Verified baseline
 
 Milestones 002 through 004B have booted successfully on a physical Pi 3. Display
