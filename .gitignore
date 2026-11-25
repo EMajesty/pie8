@@ -2,3 +2,34 @@
 /build/
 /result
 *.swp
+
+# KiCad generated and machine-local files (hardware sources remain tracked).
+/hardware/**/*.000
+/hardware/**/*.bak
+/hardware/**/*.bck
+/hardware/**/*.kicad_pcb-bak
+/hardware/**/*.kicad_sch-bak
+/hardware/**/*-backups/
+/hardware/**/*-cache*
+/hardware/**/*-bak
+/hardware/**/*-bak*
+/hardware/**/*~
+/hardware/**/~*
+/hardware/**/_autosave-*
+/hardware/**/\#auto_saved_files\#/
+/hardware/**/*.tmp
+/hardware/**/*-save.pro
+/hardware/**/*-save.kicad_pcb
+/hardware/**/fp-info-cache
+/hardware/**/~*.lck
+
+# Generated netlists, autorouter exchanges, and BOM exports.
+/hardware/**/*.net
+/hardware/**/*.dsn
+/hardware/**/*.ses
+/hardware/**/*.xml
+/hardware/**/*.csv
+
+# KiCad archived backups and local project settings.
+/hardware/**/*-backups/*.zip
+/hardware/**/*.kicad_prl

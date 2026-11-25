@@ -1,0 +1,6 @@
+[submodule "hardware/shared/majestic-kicad"]
+	path = hardware/shared/majestic-kicad
+	url = https://github.com/EMajesty/majestic-kicad
+[submodule "hardware/shared/keyswitches.pretty"]
+	path = hardware/shared/keyswitches.pretty
+	url = https://github.com/daprice/keyswitches.pretty
